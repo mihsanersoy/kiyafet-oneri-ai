@@ -720,25 +720,34 @@ export default function UserPreferenceForm() {
 
         {/* 2. BÖLÜM: Mikro-Lokasyon & Fiziksel Profil Formu (Glassmorphism) */}
         <div className="backdrop-blur-xl bg-slate-950/70 rounded-2xl shadow-2xl border border-white/15 p-6 sm:p-8 text-slate-100 transition-all">
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="inline-block text-xs font-semibold tracking-wider uppercase text-sky-300 bg-sky-500/20 border border-sky-400/30 px-2.5 py-1 rounded-full">
-                OptiWear AI
-              </span>
-              <span className="text-xs text-slate-400">| Mikro-Lokasyon & Termal Profil</span>
+          <div className="mb-6 flex items-start gap-3.5 sm:gap-4">
+            <div className="shrink-0 rounded-2xl bg-white p-1.5 shadow-lg shadow-sky-500/20 ring-2 ring-sky-400/40">
+              <img
+                src="/logo.png"
+                alt="OptiWear Logo"
+                className="h-12 w-12 sm:h-14 sm:w-14 object-contain"
+              />
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-              <span className="bg-gradient-to-r from-sky-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
-                OptiWear
-              </span>
-              <span className="text-white/80 font-normal text-lg sm:text-xl">
-                – Akıllı Giyim Asistanı
-              </span>
-            </h1>
-            <p className="text-sm text-slate-300 mt-1">
-              81 ilden şehrinizi seçin veya tek tıkla konumunuzu bulun; anlık
-              hava olayına ve vücut yapınıza göre kişiselleştirilmiş öneri alın.
-            </p>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                <span className="inline-block text-xs font-semibold tracking-wider uppercase text-sky-300 bg-sky-500/20 border border-sky-400/30 px-2.5 py-0.5 rounded-full">
+                  OptiWear AI
+                </span>
+                <span className="text-xs text-slate-400">| Mikro-Lokasyon & Termal Profil</span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex flex-wrap items-center gap-2">
+                <span className="bg-gradient-to-r from-sky-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
+                  OptiWear
+                </span>
+                <span className="text-white/80 font-normal text-lg sm:text-xl">
+                  – Akıllı Giyim Asistanı
+                </span>
+              </h1>
+              <p className="text-sm text-slate-300 mt-1">
+                81 ilden şehrinizi seçin veya tek tıkla konumunuzu bulun; anlık
+                hava olayına ve vücut yapınıza göre kişiselleştirilmiş öneri alın.
+              </p>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
@@ -1158,8 +1167,13 @@ export default function UserPreferenceForm() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-sky-300">
-                  OptiWear & Gemini AI Kombin ve Ekipman Önerin
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-sky-300 flex items-center gap-2">
+                  <img
+                    src="/logo.png"
+                    alt="OptiWear"
+                    className="h-5 w-5 rounded-md bg-white p-0.5 object-contain"
+                  />
+                  <span>OptiWear & Gemini AI Kombin ve Ekipman Önerin</span>
                 </h3>
                 <span className="text-[11px] bg-white/10 px-2.5 py-0.5 rounded-full text-sky-200">
                   {result.kullanilan_senaryo_sayisi} geçmiş senaryo analiz edildi

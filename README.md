@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./public/logo.png" alt="OptiWear Logo" width="140" />
+</p>
+
 # 🌤️🧥 OptiWear - Akıllı Hava Durumu ve Kişiselleştirilmiş Kıyafet Öneri AI
 
 > **Klasik hava durumu uygulamaları sadece gökyüzüne bakar; OptiWear ise seni, vücut yapını ve geçmiş deneyimlerini tanır.**
@@ -54,10 +58,13 @@ Klasik hava durumu servisleri *"Bugün hava 10°C, mont giyin"* der ve geçer. A
 Proje2/ (OptiWear)
 ├── app/
 │   ├── globals.css         # Tailwind temel stilleri
+│   ├── icon.png            # Tarayıcı sekme ikonu (Favicon)
 │   ├── layout.tsx          # Kök sayfa düzeni ve OptiWear meta etiketleri
 │   └── page.tsx            # Ana sayfa (HomePage Server Component)
 ├── components/
 │   └── UserPreferenceForm.tsx  # 81 İl Combobox, Geolocation, OptiWear Hafıza Kartı ve CSS Animasyonları
+├── public/
+│   └── logo.png            # OptiWear marka logosu (560x560 kare ikon)
 ├── database.py             # SQLite (scenarios.db) / PostgreSQL ORM ve oturum yönetimi
 ├── main.py                 # FastAPI backend, Gemini AI motoru ve hava durumu servisleri
 ├── next.config.mjs         # Next.js yapılandırması
