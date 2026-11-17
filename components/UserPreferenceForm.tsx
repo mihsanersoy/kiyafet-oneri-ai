@@ -721,15 +721,23 @@ export default function UserPreferenceForm() {
         {/* 2. BÖLÜM: Mikro-Lokasyon & Fiziksel Profil Formu (Glassmorphism) */}
         <div className="backdrop-blur-xl bg-slate-950/70 rounded-2xl shadow-2xl border border-white/15 p-6 sm:p-8 text-slate-100 transition-all">
           <div className="mb-6">
-            <span className="inline-block text-xs font-medium tracking-wider uppercase text-sky-300 bg-sky-500/20 border border-sky-400/30 px-2.5 py-1 rounded-full mb-2">
-              📍 Mikro-Lokasyon & Termal Profil
-            </span>
-            <h1 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
-              Hava Durumu & Kişiselleştirilmiş Kombin AI
+            <div className="flex items-center gap-2 mb-2">
+              <span className="inline-block text-xs font-semibold tracking-wider uppercase text-sky-300 bg-sky-500/20 border border-sky-400/30 px-2.5 py-1 rounded-full">
+                OptiWear AI
+              </span>
+              <span className="text-xs text-slate-400">| Mikro-Lokasyon & Termal Profil</span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+              <span className="bg-gradient-to-r from-sky-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
+                OptiWear
+              </span>
+              <span className="text-white/80 font-normal text-lg sm:text-xl">
+                – Akıllı Giyim Asistanı
+              </span>
             </h1>
             <p className="text-sm text-slate-300 mt-1">
               81 ilden şehrinizi seçin veya tek tıkla konumunuzu bulun; anlık
-              hava olayına ve vücut yapınıza göre öneri alın.
+              hava olayına ve vücut yapınıza göre kişiselleştirilmiş öneri alın.
             </p>
           </div>
 
@@ -1079,7 +1087,7 @@ export default function UserPreferenceForm() {
                   <span>Yapay Zeka & Hava Durumu Analiz Ediliyor...</span>
                 </>
               ) : (
-                <span>Gönder ve Kişiselleştirilmiş Öneri Al</span>
+                <span>OptiWear ile Kişiselleştirilmiş Öneri Al</span>
               )}
             </button>
           </form>
@@ -1151,7 +1159,7 @@ export default function UserPreferenceForm() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-sky-300">
-                  Gemini AI Kombin & Fonksiyonel Ekipman Önerin
+                  OptiWear & Gemini AI Kombin ve Ekipman Önerin
                 </h3>
                 <span className="text-[11px] bg-white/10 px-2.5 py-0.5 rounded-full text-sky-200">
                   {result.kullanilan_senaryo_sayisi} geçmiş senaryo analiz edildi

@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Hava Durumu & Kişiselleştirilmiş Kombin Önerisi",
+  title: "OptiWear - Akıllı Hava Durumu & Kişiselleştirilmiş Giyim Asistanı",
   description:
-    "Vücut yapınıza, termal hassasiyetinize ve şehrinizin hissedilen sıcaklığına göre yapay zeka destekli kıyafet önerisi.",
+    "OptiWear; vücut yapınıza, termal hassasiyetinize ve anlık mikro-lokasyon hava durumuna göre yapay zeka destekli katmanlı giyim ve fonksiyonel ekipman önerisi sunar.",
 };
 
 export default function RootLayout({

@@ -1,12 +1,12 @@
-# 🌤️🧥 Kişiselleştirilmiş Hava Durumu ve Kıyafet Öneri AI
+# 🌤️🧥 OptiWear - Akıllı Hava Durumu ve Kişiselleştirilmiş Kıyafet Öneri AI
 
-> **Klasik hava durumu uygulamaları sadece gökyüzüne bakar; bu uygulama ise seni, vücut yapını ve geçmiş deneyimlerini tanır.**
+> **Klasik hava durumu uygulamaları sadece gökyüzüne bakar; OptiWear ise seni, vücut yapını ve geçmiş deneyimlerini tanır.**
 
 Klasik hava durumu servisleri *"Bugün hava 10°C, mont giyin"* der ve geçer. Ancak gerçek dünyada **10°C**, herkes için aynı hissettirmez:
 - Vücut Kitle Endeksi (VKE) yüksek olan veya tempolu yürürken çabuk terleyen biri için kalın bir kışlık mont, 10 dakika içinde terleyip ardından rüzgarda üşütmek demektir.
 - Daha önce *"15 derecede montla terledim"* veya *"Rüzgarlı havada tişörtle üşüdüm"* diyen bir kullanıcının geçmiş deneyimleri dikkate alınmadığında yapay zeka jenerik öneriler üretir.
 
-**Kişiselleştirilmiş Hava Durumu ve Kıyafet Öneri AI**; kullanıcının fiziksel verilerini (**Boy, Kilo, VKE, Terleme Hassasiyeti**), mikro-lokasyon meteoroloji verilerini (**Hissedilen Sıcaklık, Rüzgar Hızı, WMO Hava Olayı Kodu**) ve **Kişisel Senaryo Hafızası'nı (`scenarios.db`)** bir araya getirerek **Google Gemini AI** ile nokta atışı, katmanlı giyim (*layering*) ve fonksiyonel ekipman (şemsiye, kaymaz bot, rüzgarlık vb.) önerisi sunar.
+**OptiWear**; kullanıcının fiziksel verilerini (**Boy, Kilo, VKE, Terleme Hassasiyeti**), mikro-lokasyon meteoroloji verilerini (**Hissedilen Sıcaklık, Rüzgar Hızı, WMO Hava Olayı Kodu**) ve **Kişisel Senaryo Hafızası'nı (`scenarios.db`)** bir araya getirerek **Google Gemini AI** ile nokta atışı, katmanlı giyim (*layering*) ve fonksiyonel ekipman (şemsiye, kaymaz bot, rüzgarlık vb.) önerisi sunar.
 
 ---
 
@@ -51,13 +51,13 @@ Klasik hava durumu servisleri *"Bugün hava 10°C, mont giyin"* der ve geçer. A
 ## 📁 Proje Dizin Yapısı
 
 ```text
-Proje2/
+Proje2/ (OptiWear)
 ├── app/
 │   ├── globals.css         # Tailwind temel stilleri
-│   ├── layout.tsx          # Kök sayfa düzeni ve meta etiketleri
+│   ├── layout.tsx          # Kök sayfa düzeni ve OptiWear meta etiketleri
 │   └── page.tsx            # Ana sayfa (HomePage Server Component)
 ├── components/
-│   └── UserPreferenceForm.tsx  # 81 İl Combobox, Geolocation, Hafıza Kartı ve CSS Animasyonları
+│   └── UserPreferenceForm.tsx  # 81 İl Combobox, Geolocation, OptiWear Hafıza Kartı ve CSS Animasyonları
 ├── database.py             # SQLite (scenarios.db) / PostgreSQL ORM ve oturum yönetimi
 ├── main.py                 # FastAPI backend, Gemini AI motoru ve hava durumu servisleri
 ├── next.config.mjs         # Next.js yapılandırması

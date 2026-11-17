@@ -17,8 +17,8 @@ load_dotenv()
 init_db()
 
 app = FastAPI(
-    title="Kişiselleştirilmiş Hava Durumu & Kıyafet Öneri AI",
-    description="Mikro-lokasyon, WMO Hava Olayı Kodu, Rüzgar Hızı, VKE ve Kişisel Senaryo Hafızası destekli FastAPI & Gemini AI servisi.",
+    title="OptiWear API - Kişiselleştirilmiş Hava Durumu & Giyim Öneri AI",
+    description="OptiWear: Mikro-lokasyon, WMO Hava Olayı Kodu, Rüzgar Hızı, VKE ve Kişisel Senaryo Hafızası destekli FastAPI & Gemini AI servisi.",
     version="5.0.0",
 )
 
@@ -35,7 +35,7 @@ OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 SYSTEM_INSTRUCTION = (
-    "Sen uzman bir termal konfor danışmanısın ve kişisel giyim stratejistisin. "
+    "Sen OptiWear'ın uzman termal konfor danışmanı ve kişisel giyim stratejistisin. "
     "Görevin; kullanıcının boyu, kilosu, hesaplanan Vücut Kitle Endeksi (VKE), "
     "soğukta hareket edince çabuk terleme eğilimi, bulunduğu mikro-konumun (İl/İlçe veya Koordinat) "
     "anlık hissedilen sıcaklığı (feels_like), rüzgar hızı, anlık hava olayı (Güneşli, Yağmurlu, Karlı, "
