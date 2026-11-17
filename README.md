@@ -147,6 +147,15 @@ npm run dev
 | Metot | Uç Nokta | Açıklama |
 |---|---|---|
 | `GET` | `/` | API durum ve servis karşılama mesajı |
+| `POST` | `/auth/register` | **Kayıt Ol:** Argon2id/Scrypt şifre hashleme + Fernet telefon şifreleme (Rate-Limit: 5/dk) |
+| `POST` | `/auth/login` | **Giriş Yap:** JWT Access Token (15 dk) + Refresh Token (7 gün) üretir (Rate-Limit: 5/dk) |
+| `POST` | `/auth/refresh` | **Token Yenileme:** Refresh Token Rotation ile yeni oturum anahtarı döner |
+| `GET` | `/auth/me` | Giriş yapmış kullanıcının maskelenmiş profil bilgilerini döner |
+| `PATCH` | `/auth/account` | **Hesap Dondurma (Soft-Delete):** `is_active=false` yapar ve tüm JWT'leri anında iptal eder |
+| `DELETE` | `/auth/account` | **Hesap Silme (KVKK/GDPR):** Kişisel verileri kalıcı olarak anonimleştirir ve siler |
+| `GET` | `/routines/me` | Kullanıcının günlük uyanma saati (`wake_up_time`) ve rutin tercihlerini getirir |
+| `PUT` | `/routines/me` | Flutter mobil uygulamasından uyanma saati, konum, boy/kilo ve FCM token günceller |
+| `POST` | `/routines/me/morning-brief` | Kullanıcının rutini + termal hafızası ile sabah uyanma kombin bildirimini üretir |
 | `GET` | `/scenarios` | Kayıtlı tüm geçmiş kişisel senaryoları listeler |
 | `POST` | `/scenarios` | Yeni tekli veya çoklu geçmiş deneyim senaryosu kaydeder |
 | `DELETE` | `/scenarios/{id}` | Belirtilen bir senaryoyu veritabanından kalıcı olarak siler |

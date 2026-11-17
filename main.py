@@ -1,35 +1,82 @@
 import os
+import re
+import uuid
 from datetime import datetime
 from typing import List, Optional, Union
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
-from database import UserScenario, get_db, init_db
+from database import User, UserRoutine, UserScenario, get_db, init_db
+from security import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+     create_access_token,
+    create_refresh_token,
+    decode_token,
+    decrypt_pii,
+    encrypt_pii,
+    get_current_active_user,
+    get_optional_user,
+    hash_password,
+    logger as security_logger,
+    mask_phone_number,
+    rate_limiter,
+    verify_password,
+)
 
 # .env dosyasındaki ortam değişkenlerini yükle
 load_dotenv()
 
-# Uygulama başlarken scenarios.db ve user_scenarios tablosunu oluştur
+# Uygulama başlarken scenarios.db ve tabloları (users, user_routines, user_scenarios) oluştur
 init_db()
 
 app = FastAPI(
-    title="OptiWear API - Kişiselleştirilmiş Hava Durumu & Giyim Öneri AI",
-    description="OptiWear: Mikro-lokasyon, WMO Hava Olayı Kodu, Rüzgar Hızı, VKE ve Kişisel Senaryo Hafızası destekli FastAPI & Gemini AI servisi.",
-    version="5.0.0",
+    title="OptiWear API - Kişiselleştirilmiş Hava Durumu, Güvenli Auth & Giyim Öneri AI",
+    description=(
+        "OptiWear: Argon2id/Scrypt + JWT Auth, Fernet PII Şifreleme, SlowAPI/Sliding-Window Firewall, "
+        "Günlük Rutin Bildirimi ve Gemini AI destekli servis."
+    ),
+    version="5.1.0",
 )
 
-# Next.js Frontend (localhost:3000) ile sorunsuz iletişim için CORS ayarları
+# ==========================================
+# Siber Güvenlik & Firewall Katmanı: Strict CORS + HSTS / CSP Başlıkları
+# ==========================================
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080",
+)
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.\d+\.\d+)(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """
+    Her HTTP yanıtına HSTS, CSP, X-Frame-Options ve MIME-sniffing koruma
+    başlıklarını ekleyen güvenlik duvarı katmanı.
+    """
+    response: Response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Swagger UI (/docs) dışındaki tüm API yanıtlarında katı CSP uygula
+    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+    return response
 
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -106,8 +153,139 @@ def map_wmo_weather_code(wmo_code: int, temp: float, wind_speed: float) -> str:
 
 
 # ==========================================
-# Pydantic Şemaları
+# Pydantic Şemaları & Girdi Doğrulama (Sanitization)
 # ==========================================
+_EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+_PHONE_REGEX = re.compile(r"^\+?[0-9]{10,15}$")
+_TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_XSS_DANGEROUS_CHARS = re.compile(r"[<>\"';`]")
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(..., examples=["kullanici@optiwear.app"], description="Geçerli e-posta adresi")
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=64,
+        examples=["GucluSifre123!"],
+        description="En az 8 karakter, 1 büyük harf, 1 küçük harf ve 1 rakam içermeli",
+    )
+    full_name: str = Field(..., min_length=2, max_length=120, examples=["Mehmet İhsan Ersoy"])
+    phone_number: str = Field(..., examples=["+905551234567"], description="Uluslararası E.164 veya 10-15 haneli telefon")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        cleaned = (v or "").strip().lower()
+        if not _EMAIL_REGEX.match(cleaned) or len(cleaned) > 255:
+            raise ValueError("Geçerli bir e-posta adresi giriniz.")
+        return cleaned
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Şifre en az 8 karakter uzunluğunda olmalıdır.")
+        if not re.search(r"[A-ZÇĞİÖŞÜ]", v):
+            raise ValueError("Şifre en az 1 büyük harf içermelidir.")
+        if not re.search(r"[a-zçğıöşü]", v):
+            raise ValueError("Şifre en az 1 küçük harf içermelidir.")
+        if not re.search(r"\d", v):
+            raise ValueError("Şifre en az 1 rakam içermelidir.")
+        return v
+
+    @field_validator("full_name")
+    @classmethod
+    def sanitize_full_name(cls, v: str) -> str:
+        cleaned = _XSS_DANGEROUS_CHARS.sub("", (v or "").strip())
+        if len(cleaned) < 2:
+            raise ValueError("İsim-soyisim en az 2 karakter olmalıdır.")
+        return cleaned
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        cleaned = re.sub(r"[\s\-\(\)]", "", (v or "").strip())
+        if not _PHONE_REGEX.match(cleaned):
+            raise ValueError(
+                "Telefon numarası 10 ile 15 rakam arasında olmalıdır (Örn: +905551234567 veya 05551234567)."
+            )
+        return cleaned
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., examples=["kullanici@optiwear.app"])
+    password: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return (v or "").strip().lower()
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., description="Yenileme (Refresh) JWT Token")
+
+
+class AccountActionRequest(BaseModel):
+    password: str = Field(..., description="İşlem onayı için mevcut kullanıcı şifresi")
+    reason: Optional[str] = Field(default=None, max_length=250, description="İsteğe bağlı ayrılma/dondurma nedeni")
+
+
+class UserProfileOut(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    phone_masked: str
+    is_active: bool
+    created_at: datetime
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    user: UserProfileOut
+
+
+class RoutineUpdateRequest(BaseModel):
+    wake_up_time: str = Field(default="07:30", examples=["07:30"], description="Uyanma saati (HH:MM)")
+    sehir: str = Field(default="İstanbul", max_length=100)
+    ilce: Optional[str] = Field(default="", max_length=100)
+    lat: Optional[float] = Field(default=None)
+    lon: Optional[float] = Field(default=None)
+    boy: float = Field(default=175.0, gt=50, lt=260)
+    kilo: float = Field(default=75.0, gt=20, lt=350)
+    terleme_egilimi: str = Field(default="Hayır")
+    notification_enabled: bool = Field(default=True)
+    fcm_token: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("wake_up_time")
+    @classmethod
+    def validate_time(cls, v: str) -> str:
+        cleaned = (v or "").strip()
+        if not _TIME_REGEX.match(cleaned):
+            raise ValueError("Uyanma saati HH:MM formatında olmalıdır (Örn: 07:30).")
+        return cleaned
+
+
+class RoutineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: str
+    wake_up_time: str
+    sehir: str
+    ilce: Optional[str]
+    lat: Optional[float]
+    lon: Optional[float]
+    boy: float
+    kilo: float
+    terleme_egilimi: str
+    notification_enabled: bool
+    updated_at: datetime
+
+
 class ScenarioCreate(BaseModel):
     scenario_text: Optional[str] = Field(
         default=None,
@@ -476,14 +654,376 @@ async def generate_ai_recommendation(
 
 
 # ==========================================
-# API Endpoint'leri
+# Yardımcı Fonksiyon: User -> UserProfileOut Dönüştürücü (PII Maskeli)
+# ==========================================
+def _to_user_profile_out(user: User) -> UserProfileOut:
+    plain_phone = decrypt_pii(user.phone_number_enc)
+    return UserProfileOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        phone_masked=mask_phone_number(plain_phone),
+        is_active=user.is_active,
+        created_at=user.created_at,
+    )
+
+
+# ==========================================
+# 1. KİMLİK DOĞRULAMA & HESAP YÖNETİMİ (/auth/*)
+# ==========================================
+@app.post(
+    "/auth/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def register_user(
+    payload: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Yeni kullanıcı kaydı oluşturur:
+    - Firewall Rate Limit: IP başına dakikada maksimum 5 deneme.
+    - Şifre Argon2id/Scrypt ile hashlenir, telefon Fernet/AES ile şifrelenir.
+    - Varsayılan günlük rutin (07:30) kaydı otomatik açılır.
+    """
+    rate_limiter.check(request, bucket="auth_register", max_requests=5, window_seconds=60)
+
+    existing = db.query(User).filter(User.email == payload.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu e-posta adresi ile kayıtlı bir hesap zaten mevcut.",
+        )
+
+    new_user = User(
+        id=str(uuid.uuid4()),
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        full_name=payload.full_name,
+        phone_number_enc=encrypt_pii(payload.phone_number),
+        is_active=True,
+        token_version=1,
+    )
+    db.add(new_user)
+    db.flush()
+
+    default_routine = UserRoutine(
+        user_id=new_user.id,
+        wake_up_time="07:30",
+        sehir="İstanbul",
+        ilce="",
+        boy=175.0,
+        kilo=75.0,
+        terleme_egilimi="Hayır",
+        notification_enabled=True,
+    )
+    db.add(default_routine)
+    db.commit()
+    db.refresh(new_user)
+
+    security_logger.info(f"[AUTH] Yeni kullanıcı kaydı tamamlandı -> user_id={new_user.id}")
+
+    access_token = create_access_token(new_user.id, new_user.token_version)
+    refresh_token = create_refresh_token(new_user.id, new_user.token_version)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_to_user_profile_out(new_user),
+    )
+
+
+@app.post(
+    "/auth/login",
+    response_model=TokenResponse,
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def login_user(
+    payload: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Güvenli Oturum Açma (JWT Access + Refresh Token):
+    - Brute-Force Koruması: IP başına dakikada maksimum 5 deneme.
+    - Zamanlama saldırısına (Timing Attack) dayanıklı şifre doğrulaması.
+    """
+    rate_limiter.check(request, bucket="auth_login", max_requests=5, window_seconds=60)
+
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user or not verify_password(payload.password, user.hashed_password):
+        security_logger.warning("[AUTH] Başarısız giriş denemesi.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="E-posta adresi veya şifre hatalı.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hesabınız dondurulmuş veya kapatılmış durumda.",
+        )
+
+    access_token = create_access_token(user.id, user.token_version)
+    refresh_token = create_refresh_token(user.id, user.token_version)
+    security_logger.info(f"[AUTH] Başarılı giriş -> user_id={user.id}")
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_to_user_profile_out(user),
+    )
+
+
+@app.post(
+    "/auth/refresh",
+    response_model=TokenResponse,
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def refresh_user_token(
+    payload: RefreshTokenRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Refresh Token kullanarak yeni Access + Refresh Token çifti üretir (Token Rotation).
+    Flutter Dio Interceptor tarafından 401 alındığında otomatik çağrılır.
+    """
+    rate_limiter.check(request, bucket="auth_refresh", max_requests=15, window_seconds=60)
+
+    claims = decode_token(payload.refresh_token, expected_type="refresh")
+    user_id = claims.get("sub")
+    token_version = claims.get("tv", 1)
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active or user.token_version != token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Yenileme oturumu geçersiz veya sonlandırılmış.",
+        )
+
+    new_access = create_access_token(user.id, user.token_version)
+    new_refresh = create_refresh_token(user.id, user.token_version)
+    return TokenResponse(
+        access_token=new_access,
+        refresh_token=new_refresh,
+        user=_to_user_profile_out(user),
+    )
+
+
+@app.get(
+    "/auth/me",
+    response_model=UserProfileOut,
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def get_my_profile(current_user: User = Depends(get_current_active_user)):
+    """Giriş yapmış kullanıcının profil bilgilerini (PII maskeli olarak) döner."""
+    return _to_user_profile_out(current_user)
+
+
+@app.patch(
+    "/auth/account",
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def freeze_account(
+    payload: AccountActionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Hesap Dondurma (Soft-Delete):
+    - Mevcut şifreyi doğrular, is_active=False yapar ve token_version'ı artırarak
+      tüm cihazlardaki açık JWT oturumlarını anında düşürür.
+    """
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="İşlem onayı için girilen şifre hatalı.",
+        )
+
+    current_user.is_active = False
+    current_user.token_version += 1
+    if current_user.routine:
+        current_user.routine.notification_enabled = False
+        current_user.routine.fcm_token = None
+    db.commit()
+
+    security_logger.info(f"[AUTH] Hesap donduruldu (soft-delete) -> user_id={current_user.id}")
+    return {
+        "durum": "donduruldu",
+        "mesaj": "Hesabınız güvenli bir şekilde donduruldu ve tüm aktif oturumlarınız kapatıldı.",
+    }
+
+
+@app.delete(
+    "/auth/account",
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def delete_and_anonymize_account(
+    payload: AccountActionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Hesap Silme & KVKK/GDPR Anonimleştirme:
+    - Kullanıcının şifresini doğrular.
+    - Kişisel verileri (e-posta, isim, şifreli telefon) geri döndürülemez biçimde
+      anonimleştirir, is_active=False yapar ve kişisel senaryo/rutin verilerini temizler.
+    """
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Hesap silme onayı için girilen şifre hatalı.",
+        )
+
+    anon_suffix = uuid.uuid4().hex[:12]
+    current_user.email = f"deleted_{anon_suffix}@anon.optiwear.local"
+    current_user.full_name = "Anonimleştirilmiş Kullanıcı"
+    current_user.phone_number_enc = ""
+    current_user.hashed_password = hash_password(uuid.uuid4().hex)
+    current_user.is_active = False
+    current_user.token_version += 1
+
+    db.query(UserScenario).filter(UserScenario.user_id == current_user.id).delete()
+    db.query(UserRoutine).filter(UserRoutine.user_id == current_user.id).delete()
+    db.commit()
+
+    security_logger.info(f"[AUTH] Hesap kalıcı olarak anonimleştirildi ve kapatıldı -> user_id={current_user.id}")
+    return {
+        "durum": "silindi",
+        "mesaj": "Hesabınız ve tüm kişisel verileriniz KVKK/GDPR kapsamında kalıcı olarak silindi.",
+    }
+
+
+# ==========================================
+# 2. GÜNLÜK RUTİN & SABAH BİLDİRİM SERVİSİ (/routines/*)
+# ==========================================
+@app.get(
+    "/routines/me",
+    response_model=RoutineOut,
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def get_my_routine(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Kullanıcının uyanma saati ve günlük rutin tercihlerini döner."""
+    routine = db.query(UserRoutine).filter(UserRoutine.user_id == current_user.id).first()
+    if not routine:
+        routine = UserRoutine(
+            user_id=current_user.id,
+            wake_up_time="07:30",
+            sehir="İstanbul",
+            ilce="",
+            boy=175.0,
+            kilo=75.0,
+            terleme_egilimi="Hayır",
+            notification_enabled=True,
+        )
+        db.add(routine)
+        db.commit()
+        db.refresh(routine)
+    return routine
+
+
+@app.put(
+    "/routines/me",
+    response_model=RoutineOut,
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def update_my_routine(
+    payload: RoutineUpdateRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Flutter mobil uygulamasından kullanıcının uyanma saati (wake_up_time),
+    konumu, boy/kilo verileri ve FCM bildirim anahtarını günceller.
+    """
+    routine = db.query(UserRoutine).filter(UserRoutine.user_id == current_user.id).first()
+    if not routine:
+        routine = UserRoutine(user_id=current_user.id)
+        db.add(routine)
+
+    routine.wake_up_time = payload.wake_up_time
+    routine.sehir = payload.sehir
+    routine.ilce = payload.ilce
+    routine.lat = payload.lat
+    routine.lon = payload.lon
+    routine.boy = payload.boy
+    routine.kilo = payload.kilo
+    routine.terleme_egilimi = payload.terleme_egilimi
+    routine.notification_enabled = payload.notification_enabled
+    if payload.fcm_token is not None:
+        routine.fcm_token = payload.fcm_token
+
+    db.commit()
+    db.refresh(routine)
+    return routine
+
+
+@app.post(
+    "/routines/me/morning-brief",
+    response_model=RecommendationResponse,
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+async def trigger_morning_routine_brief(
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Kullanıcının kayıtlı uyanma rutini (user_routines) ve kişisel termal
+    hafızasını (user_scenarios) birleştirerek sabah kombin bildirimini üretir.
+    """
+    rate_limiter.check(request, bucket="morning_brief", max_requests=10, window_seconds=60)
+
+    routine = db.query(UserRoutine).filter(UserRoutine.user_id == current_user.id).first()
+    if not routine:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Kayıtlı günlük rutin bulunamadı. Lütfen önce /routines/me üzerinden rutininizi kaydedin.",
+        )
+
+    req_model = RecommendationRequest(
+        sehir=routine.sehir,
+        ilce=routine.ilce,
+        lat=routine.lat,
+        lon=routine.lon,
+        boy=routine.boy,
+        kilo=routine.kilo,
+        terleme_egilimi=routine.terleme_egilimi,
+        gecmis_senaryolar=[],
+    )
+    return await get_recommendation(
+        user_data=req_model,
+        request=request,
+        db=db,
+        current_user=current_user,
+    )
+
+
+# ==========================================
+# 3. GENEL & HAVA DURUMU / ÖNERİ ENDPOINT'LERİ
 # ==========================================
 @app.get("/")
 def root():
     return {
-        "mesaj": "Kişiselleştirilmiş Hava Durumu & Kıyafet Öneri AI (v5.0) 8001 portunda çalışıyor!",
+        "proje": "OptiWear API (v5.1)",
+        "mesaj": "OptiWear Güvenli Hava Durumu, Rutin & Kıyafet Öneri AI 8001 portunda çalışıyor!",
         "dokumantasyon": "http://127.0.0.1:8001/docs",
         "endpoints": [
+            "POST /auth/register",
+            "POST /auth/login",
+            "POST /auth/refresh",
+            "GET /auth/me",
+            "PATCH /auth/account (Hesap Dondur)",
+            "DELETE /auth/account (Hesap Sil & Anonimleştir)",
+            "GET /routines/me",
+            "PUT /routines/me",
+            "POST /routines/me/morning-brief",
             "GET /scenarios",
             "POST /scenarios",
             "DELETE /scenarios/{scenario_id}",
@@ -521,13 +1061,25 @@ async def get_ip_location():
 
 
 @app.get("/scenarios", response_model=List[ScenarioOut])
-def list_scenarios(db: Session = Depends(get_db)):
-    """Kullanıcının kaydettiği tüm geçmiş senaryoları yeniden eskiye listeler."""
-    return db.query(UserScenario).order_by(UserScenario.id.desc()).all()
+def list_scenarios(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Kullanıcının kaydettiği geçmiş senaryoları yeniden eskiye listeler."""
+    query = db.query(UserScenario)
+    if current_user is not None:
+        query = query.filter(UserScenario.user_id == current_user.id)
+    else:
+        query = query.filter(UserScenario.user_id.is_(None))
+    return query.order_by(UserScenario.id.desc()).all()
 
 
 @app.post("/scenarios", response_model=List[ScenarioOut], status_code=status.HTTP_201_CREATED)
-def create_scenario(payload: ScenarioCreate, db: Session = Depends(get_db)):
+def create_scenario(
+    payload: ScenarioCreate,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     """Tekli veya çoklu kişisel termal deneyim senaryosu kaydeder."""
     items_to_add: List[str] = []
 
@@ -545,9 +1097,11 @@ def create_scenario(payload: ScenarioCreate, db: Session = Depends(get_db)):
             detail="En az bir geçerli senaryo metni girmelisiniz.",
         )
 
+    uid = current_user.id if current_user is not None else None
     created_records: List[UserScenario] = []
     for text_val in items_to_add:
-        new_item = UserScenario(scenario_text=text_val)
+        sanitized_text = _XSS_DANGEROUS_CHARS.sub("", text_val)[:500]
+        new_item = UserScenario(user_id=uid, scenario_text=sanitized_text)
         db.add(new_item)
         created_records.append(new_item)
 
@@ -555,14 +1109,20 @@ def create_scenario(payload: ScenarioCreate, db: Session = Depends(get_db)):
     for rec in created_records:
         db.refresh(rec)
 
-    print(f"[Veritabanı] {len(created_records)} yeni senaryo scenarios.db'ye kaydedildi.")
     return created_records
 
 
 @app.delete("/scenarios/{scenario_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scenario(scenario_id: int, db: Session = Depends(get_db)):
+def delete_scenario(
+    scenario_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     """Kayıtlı bir senaryoyu ID'sine göre siler."""
-    item = db.query(UserScenario).filter(UserScenario.id == scenario_id).first()
+    query = db.query(UserScenario).filter(UserScenario.id == scenario_id)
+    if current_user is not None:
+        query = query.filter(UserScenario.user_id == current_user.id)
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -575,8 +1135,14 @@ def delete_scenario(scenario_id: int, db: Session = Depends(get_db)):
 
 @app.post("/get-recommendation", response_model=RecommendationResponse)
 async def get_recommendation(
-    user_data: RecommendationRequest, db: Session = Depends(get_db)
+    user_data: RecommendationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
 ):
+    # Firewall Hız Sınırı: Gemini API kota koruması (Dakikada max 15 istek)
+    rate_limiter.check(request, bucket="get_recommendation", max_requests=15, window_seconds=60)
+
     # 1. Mikro-lokasyon (İl+İlçe veya GPS koordinatı) hava, rüzgar ve WMO hava olayı verisini çek
     weather = await fetch_weather_data(
         sehir=user_data.sehir,
@@ -585,25 +1151,32 @@ async def get_recommendation(
         lon=user_data.lon,
     )
 
+    uid = current_user.id if current_user is not None else None
+
     # 2. İstek içinde doğrudan gönderilen yeni senaryolar varsa veritabanına kaydet
     if user_data.gecmis_senaryolar:
-        existing_texts = {
-            r.scenario_text for r in db.query(UserScenario).all()
-        }
+        existing_query = db.query(UserScenario)
+        if uid is not None:
+            existing_query = existing_query.filter(UserScenario.user_id == uid)
+        else:
+            existing_query = existing_query.filter(UserScenario.user_id.is_(None))
+        existing_texts = {r.scenario_text for r in existing_query.all()}
+
         for s in user_data.gecmis_senaryolar:
-            cleaned_s = (s or "").strip()
+            cleaned_s = _XSS_DANGEROUS_CHARS.sub("", (s or "").strip())[:500]
             if cleaned_s and cleaned_s != "string" and cleaned_s not in existing_texts:
-                db.add(UserScenario(scenario_text=cleaned_s))
+                db.add(UserScenario(user_id=uid, scenario_text=cleaned_s))
                 existing_texts.add(cleaned_s)
         db.commit()
 
     # 3. Veritabanındaki geçmiş kullanıcı senaryolarını çek
-    saved_rows = (
-        db.query(UserScenario)
-        .order_by(UserScenario.id.desc())
-        .limit(15)
-        .all()
-    )
+    scenario_query = db.query(UserScenario)
+    if uid is not None:
+        scenario_query = scenario_query.filter(UserScenario.user_id == uid)
+    else:
+        scenario_query = scenario_query.filter(UserScenario.user_id.is_(None))
+
+    saved_rows = scenario_query.order_by(UserScenario.id.desc()).limit(15).all()
     past_scenarios = [row.scenario_text for row in saved_rows]
 
     # 4. VKE hesapla ve tüm bağlamı Gemini AI'a gönder

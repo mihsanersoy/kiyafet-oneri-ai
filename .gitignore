@@ -69,6 +69,18 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # ==========================================
+# Flutter & Dart (Mobil Uygulama)
+# ==========================================
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+mobile/build/
+*.iml
+
+# ==========================================
 # Loglar ve Geçici Dosyalar
 # ==========================================
 *.log
