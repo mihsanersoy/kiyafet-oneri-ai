@@ -1755,6 +1755,66 @@ async def create_travel_packing_recommendation(
     )
 
 
+@app.get(
+    "/notifications/smart-engagement",
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def generate_smart_daytime_engagement_schedule():
+    """
+    Kamusal / Kurumsal uygulama standartlarında 08:00 - 22:00 (Gündüz/Akşam)
+    penceresinde rastgele (jittered) 3 bildirim saati ve mesajı üretir.
+    Gece 22:00 - Sabah 08:00 (Sessiz Saatler) aralığında bildirim üretilmez.
+    """
+    import random
+
+    pool = [
+        {
+            "baslik": "🌤️ Öğle Saatleri Yaklaşıyor!",
+            "mesaj": "Sıcaklık gün içi zirvesine doğru çıkıyor. Kalın giyindiysen terlememek için dış katmanını hafifletmeyi unutma!",
+        },
+        {
+            "baslik": "🧥 Akşamüstü Serinliği Başlıyor",
+            "mesaj": "Güneş etkisini kaybederken hissedilen sıcaklık düşüyor. Dışarıdaysan rüzgarlığını veya üst katmanını hazır tut.",
+        },
+        {
+            "baslik": "🧠 Bugün Termal Konforun Nasıldı?",
+            "mesaj": "Bugünkü kıyafetlerinle terledin mi yoksa üşüdün mü? OptiWear hafızana 1 cümle ekle, yarın çok daha nokta atışı önerelim!",
+        },
+        {
+            "baslik": "✨ Yarının Kombinini Şimdiden Planla",
+            "mesaj": "Sabah dolap karşısında vakit kaybetme! Yarının hava olayına ve VKE profiline uygun kombinin OptiWear'da hazır.",
+        },
+        {
+            "baslik": "🌬️ Rüzgar ve Hissedilen Sıcaklık Kontrolü",
+            "mesaj": "Termometreye aldanma! Rüzgar hızı hissedilen sıcaklığı değiştirebilir, dışarı çıkmadan önce OptiWear'a göz at.",
+        },
+    ]
+    selected = random.sample(pool, 3)
+    slots = [
+        ("Kuşluk / Öğle Öncesi Dilimi (09:00-12:59)", random.randint(9, 12), random.randint(0, 59)),
+        ("Öğleden Sonra / Çıkış Dilimi (14:00-17:59)", random.randint(14, 17), random.randint(0, 59)),
+        ("Akşam / Yarın Hazırlık Dilimi (19:00-21:45)", random.randint(19, 21), random.randint(0, 45)),
+    ]
+
+    schedule = []
+    for idx, (label, hh, mm) in enumerate(slots):
+        schedule.append(
+            {
+                "dilim": label,
+                "rastgele_saat": f"{hh:02d}:{mm:02d}",
+                "baslik": selected[idx]["baslik"],
+                "mesaj": selected[idx]["mesaj"],
+                "ses": "routine_alert.mp3",
+            }
+        )
+
+    return {
+        "aktif_pencere": "08:00 - 22:00",
+        "sessiz_saatler": "22:00 - 08:00 (Gece Rahatsız Etmeme Modu Aktif)",
+        "planlanan_bildirimler": schedule,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 
