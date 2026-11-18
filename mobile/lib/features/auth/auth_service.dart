@@ -8,6 +8,7 @@ class AuthService {
   AuthService({required this.apiClient, required this.storage});
 
   /// POST /auth/register
+  /// Kullanıcıyı kaydeder ve 6 haneli e-posta OTP doğrulama sürecini başlatır.
   Future<Map<String, dynamic>> register({
     required String email,
     required String password,
@@ -21,6 +22,23 @@ class AuthService {
         'password': password,
         'full_name': fullName.trim(),
         'phone_number': phoneNumber.trim(),
+      },
+    );
+
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
+  /// POST /auth/verify-email
+  /// 6 haneli OTP kodunu doğrular, is_verified=True yapar ve JWT token'ları güvenli depoya kaydeder.
+  Future<Map<String, dynamic>> verifyEmail({
+    required String email,
+    required String otpCode,
+  }) async {
+    final res = await apiClient.dio.post(
+      '/auth/verify-email',
+      data: {
+        'email': email.trim(),
+        'otp_code': otpCode.trim(),
       },
     );
 
@@ -76,7 +94,7 @@ class AuthService {
     await storage.clearSession();
   }
 
-  /// DELETE /auth/account (KVKK/GDPR Kalıcı Silme & Anonimleştirme)
+  /// DELETE /auth/account (Kalıcı Silme)
   Future<void> deleteAccount({required String password}) async {
     await apiClient.dio.delete(
       '/auth/account',

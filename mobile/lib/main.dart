@@ -105,19 +105,30 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   bool _isLogin = true;
+  bool _awaitingOtp = false;
   bool _loading = false;
   String? _errorMessage;
+  String? _infoMessage;
+  String _pendingEmail = '';
 
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  final _otpCtrl = TextEditingController();
 
   String _extractError(Object err) {
     if (err is DioException) {
       final data = err.response?.data;
       if (data is Map && data['detail'] != null) {
-        return data['detail'].toString();
+        final detail = data['detail'];
+        if (detail is List && detail.isNotEmpty) {
+          final first = detail.first;
+          if (first is Map && first['msg'] != null) {
+            return first['msg'].toString();
+          }
+        }
+        return detail.toString();
       }
     }
     return 'İşlem sırasında bir hata oluştu. Lütfen bilgilerinizi kontrol edin.';
@@ -127,19 +138,65 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() {
       _loading = true;
       _errorMessage = null;
+      _infoMessage = null;
     });
     try {
-      final user = _isLogin
-          ? await widget.authService.login(
-              email: _emailCtrl.text,
-              password: _passwordCtrl.text,
-            )
-          : await widget.authService.register(
-              email: _emailCtrl.text,
-              password: _passwordCtrl.text,
-              fullName: _nameCtrl.text,
-              phoneNumber: _phoneCtrl.text,
-            );
+      if (_isLogin) {
+        final user = await widget.authService.login(
+          email: _emailCtrl.text,
+          password: _passwordCtrl.text,
+        );
+        widget.onAuthenticated(user);
+      } else {
+        final regRes = await widget.authService.register(
+          email: _emailCtrl.text,
+          password: _passwordCtrl.text,
+          fullName: _nameCtrl.text,
+          phoneNumber: _phoneCtrl.text,
+        );
+        setState(() {
+          _pendingEmail = (regRes['email'] ?? _emailCtrl.text.trim()).toString();
+          _awaitingOtp = true;
+          _infoMessage = regRes['mesaj']?.toString() ??
+              'E-postanıza gelen 6 haneli doğrulama kodunu girin.';
+        });
+      }
+    } catch (e) {
+      final errMsg = _extractError(e);
+      if (e is DioException &&
+          e.response?.statusCode == 403 &&
+          errMsg.toLowerCase().contains('doğrulanmamış')) {
+        setState(() {
+          _pendingEmail = _emailCtrl.text.trim();
+          _awaitingOtp = true;
+          _infoMessage = errMsg;
+        });
+      } else {
+        setState(() => _errorMessage = errMsg);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _verifyOtpCode() async {
+    final code = _otpCtrl.text.trim();
+    if (code.length != 6) {
+      setState(() => _errorMessage = 'Lütfen 6 haneli doğrulama kodunu eksiksiz girin.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+    try {
+      final user = await widget.authService.verifyEmail(
+        email: _pendingEmail,
+        otpCode: code,
+      );
       widget.onAuthenticated(user);
     } catch (e) {
       setState(() => _errorMessage = _extractError(e));
@@ -178,12 +235,28 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _isLogin
-                          ? 'Güvenli hesabınıza giriş yapın'
-                          : 'Yeni OptiWear hesabı oluşturun',
+                      _awaitingOtp
+                          ? 'E-postanıza gelen 6 haneli kodu girin ($_pendingEmail)'
+                          : (_isLogin
+                              ? 'Güvenli hesabınıza giriş yapın'
+                              : 'Yeni OptiWear hesabı oluşturun'),
                       style: const TextStyle(color: Colors.white70),
                     ),
                     const SizedBox(height: 20),
+                    if (_infoMessage != null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF38BDF8).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF38BDF8)),
+                        ),
+                        child: Text(
+                          _infoMessage!,
+                          style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13),
+                        ),
+                      ),
                     if (_errorMessage != null)
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -198,61 +271,98 @@ class _AuthScreenState extends State<AuthScreen> {
                           style: const TextStyle(color: Colors.redAccent, fontSize: 13),
                         ),
                       ),
-                    if (!_isLogin) ...[
+                    if (_awaitingOtp) ...[
                       TextField(
-                        controller: _nameCtrl,
+                        controller: _otpCtrl,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          letterSpacing: 8,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: const InputDecoration(
-                          labelText: 'Ad Soyad',
-                          prefixIcon: Icon(Icons.person_outline),
+                          labelText: '6 Haneli OTP Doğrulama Kodu',
+                          prefixIcon: Icon(Icons.verified_user_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: _loading ? null : _verifyOtpCode,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            _loading ? 'Doğrulanıyor...' : 'Kodu Doğrula ve Giriş Yap',
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _awaitingOtp = false;
+                          _errorMessage = null;
+                          _infoMessage = null;
+                        }),
+                        child: const Text('← Bilgileri Düzenle / Geri Dön'),
+                      ),
+                    ] else ...[
+                      if (!_isLogin) ...[
+                        TextField(
+                          controller: _nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Ad Soyad (Türkçe karakter destekli)',
+                            prefixIcon: Icon(Icons.person_outline),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(
+                            labelText: 'Telefon (+905...)',
+                            prefixIcon: Icon(Icons.phone_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      TextField(
+                        controller: _emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          labelText: 'E-posta Adresi',
+                          prefixIcon: Icon(Icons.email_outlined),
                         ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
-                        controller: _phoneCtrl,
-                        keyboardType: TextInputType.phone,
+                        controller: _passwordCtrl,
+                        obscureText: true,
                         decoration: const InputDecoration(
-                          labelText: 'Telefon (+905...)',
-                          prefixIcon: Icon(Icons.phone_outlined),
+                          labelText: 'Şifre (En az 8 karakter, Büyük/Küçük Harf + Rakam)',
+                          prefixIcon: Icon(Icons.lock_outline),
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: _loading ? null : _submit,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(_loading
+                              ? 'İşleniyor...'
+                              : (_isLogin ? 'Giriş Yap' : 'Kayıt Ol')),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _isLogin = !_isLogin;
+                          _errorMessage = null;
+                          _infoMessage = null;
+                        }),
+                        child: Text(_isLogin
+                            ? 'Hesabınız yok mu? Kayıt Olun'
+                            : 'Zaten hesabınız var mı? Giriş Yapın'),
+                      ),
                     ],
-                    TextField(
-                      controller: _emailCtrl,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'E-posta Adresi',
-                        prefixIcon: Icon(Icons.email_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _passwordCtrl,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Şifre (En az 8 karakter, Büyük/Küçük Harf + Rakam)',
-                        prefixIcon: Icon(Icons.lock_outline),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    FilledButton(
-                      onPressed: _loading ? null : _submit,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text(_loading
-                            ? 'İşleniyor...'
-                            : (_isLogin ? 'Giriş Yap' : 'Kayıt Ol')),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () => setState(() {
-                        _isLogin = !_isLogin;
-                        _errorMessage = null;
-                      }),
-                      child: Text(_isLogin
-                          ? 'Hesabınız yok mu? Kayıt Olun'
-                          : 'Zaten hesabınız var mı? Giriş Yapın'),
-                    ),
                   ],
                 ),
               ),

@@ -54,6 +54,7 @@ class User(Base):
     # Veritabanında Fernet/AES ile şifrelenmiş olarak saklanır (Encryption at Rest)
     phone_number = Column(String(500), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
     token_version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -70,6 +71,11 @@ class User(Base):
     )
     custom_routines = relationship(
         "UserCustomRoutine",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    otps = relationship(
+        "EmailOTP",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -137,6 +143,28 @@ class UserCustomRoutine(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     user = relationship("User", back_populates="custom_routines")
+
+
+class EmailOTP(Base):
+    """
+    6 Haneli E-Posta Doğrulama Kodları Tablosu (email_otps)
+    Kullanıcı kayıt olduğunda üretilir ve 15 dakika boyunca geçerlidir.
+    """
+
+    __tablename__ = "email_otps"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    otp_code = Column(String(6), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="otps")
 
 
 class UserScenario(Base):
@@ -212,6 +240,12 @@ def init_db():
                         text("ALTER TABLE users ADD COLUMN phone_number VARCHAR(500) DEFAULT ''")
                     )
                 print("[Veritabanı] users tablosuna phone_number sütunu eklendi.")
+            if "is_verified" not in u_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 0")
+                    )
+                print("[Veritabanı] users tablosuna is_verified sütunu eklendi.")
     except Exception as mig_exc:
         print(f"[Veritabanı] Şema kontrol uyarısı: {mig_exc}")
 

@@ -1,7 +1,10 @@
+# -*- coding: utf-8 -*-
 import os
 import re
+import secrets
+import unicodedata
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Union
 import httpx
 from dotenv import load_dotenv
@@ -10,10 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
-from database import User, UserCustomRoutine, UserRoutine, UserScenario, get_db, init_db
+from database import EmailOTP, User, UserCustomRoutine, UserRoutine, UserScenario, get_db, init_db
 from security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
-     create_access_token,
+    create_access_token,
     create_refresh_token,
     decode_token,
     decrypt_pii,
@@ -153,12 +156,27 @@ def map_wmo_weather_code(wmo_code: int, temp: float, wind_speed: float) -> str:
 
 
 # ==========================================
-# Pydantic Şemaları & Girdi Doğrulama (Sanitization)
+# Pydantic Şemaları & Girdi Doğrulama (UTF-8 Türkçe Karakter Uyumlu Sanitization)
 # ==========================================
 _EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 _PHONE_REGEX = re.compile(r"^\+?[0-9]{10,15}$")
 _TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
-_XSS_DANGEROUS_CHARS = re.compile(r"[<>\"';`]")
+_XSS_DANGEROUS_CHARS = re.compile(r"[<>`]")
+_TURKISH_TEXT_REGEX = re.compile(
+    r"^[a-zA-ZçğıöşüÇĞİÖŞÜ0-9\s\.\-\'\,\(\)\!\?\:\/\&\+]+$",
+    re.UNICODE,
+)
+
+
+def _normalize_email_tr(raw_email: str) -> str:
+    """
+    E-posta adresinde sehven kullanılan Türkçe İ/ı/I karakterlerini ve Unicode
+    combining dot (\u0307) karakterini temizleyerek küçük harfe çevirir.
+    """
+    s = unicodedata.normalize("NFC", (raw_email or "").strip())
+    s = s.replace("İ", "i").replace("I", "i").replace("ı", "i")
+    s = s.lower().replace("\u0307", "")
+    return s
 
 
 class RegisterRequest(BaseModel):
@@ -167,16 +185,16 @@ class RegisterRequest(BaseModel):
         ...,
         min_length=8,
         max_length=64,
-        examples=["GucluSifre123!"],
-        description="En az 8 karakter, 1 büyük harf, 1 küçük harf ve 1 rakam içermeli",
+        examples=["GüçlüŞifre123!"],
+        description="En az 8 karakter, 1 büyük harf, 1 küçük harf ve 1 rakam içermeli (Türkçe karakter destekli)",
     )
-    full_name: str = Field(..., min_length=2, max_length=120, examples=["Mehmet İhsan Ersoy"])
+    full_name: str = Field(..., min_length=2, max_length=120, examples=["Mehmet İhsan Öztürk"])
     phone_number: str = Field(..., examples=["+905551234567"], description="Uluslararası E.164 veya 10-15 haneli telefon")
 
     @field_validator("email")
     @classmethod
     def validate_email(cls, v: str) -> str:
-        cleaned = (v or "").strip().lower()
+        cleaned = _normalize_email_tr(v)
         if not _EMAIL_REGEX.match(cleaned) or len(cleaned) > 255:
             raise ValueError("Geçerli bir e-posta adresi giriniz.")
         return cleaned
@@ -184,22 +202,29 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password_complexity(cls, v: str) -> str:
-        if len(v) < 8:
+        norm = unicodedata.normalize("NFC", v or "")
+        if len(norm) < 8:
             raise ValueError("Şifre en az 8 karakter uzunluğunda olmalıdır.")
-        if not re.search(r"[A-ZÇĞİÖŞÜ]", v):
-            raise ValueError("Şifre en az 1 büyük harf içermelidir.")
-        if not re.search(r"[a-zçğıöşü]", v):
-            raise ValueError("Şifre en az 1 küçük harf içermelidir.")
-        if not re.search(r"\d", v):
+        has_upper = any(ch.isupper() or ch in "ÇĞİÖŞÜ" for ch in norm)
+        has_lower = any(ch.islower() or ch in "çğıöşü" for ch in norm)
+        has_digit = any(ch.isdigit() for ch in norm)
+        if not has_upper:
+            raise ValueError("Şifre en az 1 büyük harf (A-Z veya ÇĞİÖŞÜ) içermelidir.")
+        if not has_lower:
+            raise ValueError("Şifre en az 1 küçük harf (a-z veya çğıöşü) içermelidir.")
+        if not has_digit:
             raise ValueError("Şifre en az 1 rakam içermelidir.")
-        return v
+        return norm
 
     @field_validator("full_name")
     @classmethod
     def sanitize_full_name(cls, v: str) -> str:
-        cleaned = _XSS_DANGEROUS_CHARS.sub("", (v or "").strip())
+        norm = unicodedata.normalize("NFC", (v or "").strip())
+        cleaned = _XSS_DANGEROUS_CHARS.sub("", norm)
         if len(cleaned) < 2:
             raise ValueError("İsim-soyisim en az 2 karakter olmalıdır.")
+        if not _TURKISH_TEXT_REGEX.match(cleaned):
+            cleaned = re.sub(r"[^a-zA-ZçğıöşüÇĞİÖŞÜ0-9\s\.\-\']", "", cleaned).strip()
         return cleaned
 
     @field_validator("phone_number")
@@ -220,7 +245,33 @@ class LoginRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v: str) -> str:
-        return (v or "").strip().lower()
+        return _normalize_email_tr(v)
+
+
+class VerifyEmailRequest(BaseModel):
+    email: str = Field(..., examples=["kullanici@optiwear.app"], description="Kayıt olunan e-posta adresi")
+    otp_code: str = Field(..., min_length=6, max_length=6, examples=["123456"], description="6 haneli doğrulama kodu")
+
+    @field_validator("email")
+    @classmethod
+    def normalize_verify_email(cls, v: str) -> str:
+        return _normalize_email_tr(v)
+
+    @field_validator("otp_code")
+    @classmethod
+    def validate_otp_digits(cls, v: str) -> str:
+        cleaned = (v or "").strip()
+        if not re.match(r"^\d{6}$", cleaned):
+            raise ValueError("OTP doğrulama kodu 6 haneli rakamlardan oluşmalıdır.")
+        return cleaned
+
+
+class RegisterOTPResponse(BaseModel):
+    durum: str = "otp_gonderildi"
+    mesaj: str
+    email: str
+    verification_required: bool = True
+    expires_in_minutes: int = 15
 
 
 class RefreshTokenRequest(BaseModel):
@@ -247,6 +298,7 @@ class UserProfileOut(BaseModel):
     full_name: str
     phone_masked: str
     is_active: bool
+    is_verified: bool = True
     created_at: datetime
 
 
@@ -324,9 +376,12 @@ class CustomRoutineCreate(BaseModel):
     @field_validator("routine_title")
     @classmethod
     def sanitize_title(cls, v: str) -> str:
-        cleaned = _XSS_DANGEROUS_CHARS.sub("", (v or "").strip())
+        norm = unicodedata.normalize("NFC", (v or "").strip())
+        cleaned = _XSS_DANGEROUS_CHARS.sub("", norm)
         if len(cleaned) < 2:
             raise ValueError("Rutin başlığı en az 2 karakter olmalıdır.")
+        if not _TURKISH_TEXT_REGEX.match(cleaned):
+            cleaned = re.sub(r"[^a-zA-ZçğıöşüÇĞİÖŞÜ0-9\s\.\-\'\,\(\)\!\?\:]", "", cleaned).strip()
         return cleaned
 
     @field_validator("routine_time")
@@ -777,8 +832,39 @@ def _to_user_profile_out(user: User) -> UserProfileOut:
         full_name=user.full_name,
         phone_masked=mask_phone_number(plain_phone),
         is_active=user.is_active,
+        is_verified=bool(user.is_verified),
         created_at=user.created_at,
     )
+
+
+def _issue_email_otp(db: Session, user: User) -> str:
+    """
+    6 haneli kriptografik rastgele OTP üretir, email_otps tablosuna (15 dk geçerli)
+    kaydeder ve geliştirme ortamı için terminale/loga yazdırır.
+    """
+    db.query(EmailOTP).filter(EmailOTP.user_id == user.id).delete()
+    otp_code = f"{secrets.randbelow(900000) + 100000:06d}"
+    expires_at = datetime.utcnow() + timedelta(minutes=15)
+
+    otp_row = EmailOTP(
+        user_id=user.id,
+        otp_code=otp_code,
+        expires_at=expires_at,
+    )
+    db.add(otp_row)
+    db.commit()
+
+    banner = (
+        "\n========================================================\n"
+        f"📧 [OptiWear OTP E-POSTA DOĞRULAMA KODU]\n"
+        f"   Alıcı E-Posta : {user.email}\n"
+        f"   6 Haneli Kod  : {otp_code}\n"
+        f"   Geçerlilik    : 15 Dakika ({expires_at.strftime('%H:%M:%S')} UTC)\n"
+        "========================================================\n"
+    )
+    print(banner, flush=True)
+    security_logger.info(f"[OTP] {user.email} için 6 haneli doğrulama kodu üretildi: {otp_code}")
+    return otp_code
 
 
 # ==========================================
@@ -786,7 +872,7 @@ def _to_user_profile_out(user: User) -> UserProfileOut:
 # ==========================================
 @app.post(
     "/auth/register",
-    response_model=TokenResponse,
+    response_model=RegisterOTPResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Kimlik Doğrulama (Auth)"],
 )
@@ -796,18 +882,32 @@ def register_user(
     db: Session = Depends(get_db),
 ):
     """
-    Yeni kullanıcı kaydı oluşturur:
+    Yeni kullanıcı kaydı oluşturur ve 6 haneli OTP doğrulama kodu üretir:
     - Firewall Rate Limit: IP başına dakikada maksimum 5 deneme.
     - Şifre Argon2id/Scrypt ile hashlenir, telefon Fernet/AES ile şifrelenir.
-    - Varsayılan günlük rutin (07:30) kaydı otomatik açılır.
+    - is_verified=False olarak kaydedilir ve 6 haneli OTP terminale yazdırılır.
     """
     rate_limiter.check(request, bucket="auth_register", max_requests=5, window_seconds=60)
 
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Bu e-posta adresi ile kayıtlı bir hesap zaten mevcut.",
+        if existing.is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Bu e-posta adresi ile doğrulanmış bir hesap zaten mevcut.",
+            )
+        # Henüz doğrulanmamış hesapsa bilgilerini güncelle ve yeni OTP gönder
+        existing.hashed_password = hash_password(payload.password)
+        existing.full_name = payload.full_name
+        existing.phone_number = encrypt_pii(payload.phone_number)
+        existing.is_active = True
+        db.commit()
+        _issue_email_otp(db, existing)
+        return RegisterOTPResponse(
+            mesaj="Kayıt bilgileriniz güncellendi. E-postanıza (terminale) gönderilen 6 haneli OTP kodunu doğrulayın.",
+            email=existing.email,
+            verification_required=True,
+            expires_in_minutes=15,
         )
 
     new_user = User(
@@ -817,6 +917,7 @@ def register_user(
         full_name=payload.full_name,
         phone_number=encrypt_pii(payload.phone_number),
         is_active=True,
+        is_verified=False,
         token_version=1,
     )
     db.add(new_user)
@@ -836,14 +937,75 @@ def register_user(
     db.commit()
     db.refresh(new_user)
 
-    security_logger.info(f"[AUTH] Yeni kullanıcı kaydı tamamlandı -> user_id={new_user.id}")
+    _issue_email_otp(db, new_user)
 
-    access_token = create_access_token(new_user.id, new_user.token_version)
-    refresh_token = create_refresh_token(new_user.id, new_user.token_version)
+    return RegisterOTPResponse(
+        mesaj="Kayıt başarılı! Lütfen e-postanıza (terminale) gönderilen 6 haneli OTP kodunu girerek hesabınızı doğrulayın.",
+        email=new_user.email,
+        verification_required=True,
+        expires_in_minutes=15,
+    )
+
+
+@app.post(
+    "/auth/verify-email",
+    response_model=TokenResponse,
+    tags=["Kimlik Doğrulama (Auth)"],
+)
+def verify_email_otp(
+    payload: VerifyEmailRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    6 Haneli E-Posta OTP Doğrulama Uç Noktası:
+    - E-posta ve 6 haneli otp_code doğrulanır.
+    - Kod doğru ve süresi (15 dk) geçmemişse is_verified=True yapılır ve
+      JWT Access + Refresh Token döner.
+    """
+    rate_limiter.check(request, bucket="auth_verify_otp", max_requests=10, window_seconds=60)
+
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bu e-posta adresine ait kullanıcı bulunamadı.",
+        )
+
+    otp_record = (
+        db.query(EmailOTP)
+        .filter(EmailOTP.user_id == user.id, EmailOTP.otp_code == payload.otp_code)
+        .order_by(EmailOTP.id.desc())
+        .first()
+    )
+
+    if not otp_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Girilen 6 haneli OTP doğrulama kodu hatalı.",
+        )
+
+    if otp_record.expires_at < datetime.utcnow():
+        db.delete(otp_record)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP kodunun süresi (15 dk) dolmuş. Lütfen tekrar giriş veya kayıt deneyerek yeni kod alın.",
+        )
+
+    user.is_verified = True
+    db.query(EmailOTP).filter(EmailOTP.user_id == user.id).delete()
+    db.commit()
+    db.refresh(user)
+
+    security_logger.info(f"[AUTH] E-posta OTP doğrulaması başarılı -> user_id={user.id}")
+
+    access_token = create_access_token(user.id, user.token_version)
+    refresh_token = create_refresh_token(user.id, user.token_version)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        user=_to_user_profile_out(new_user),
+        user=_to_user_profile_out(user),
     )
 
 
@@ -860,7 +1022,7 @@ def login_user(
     """
     Güvenli Oturum Açma (JWT Access + Refresh Token):
     - Brute-Force Koruması: IP başına dakikada maksimum 5 deneme.
-    - Zamanlama saldırısına (Timing Attack) dayanıklı şifre doğrulaması.
+    - E-posta doğrulaması (is_verified=True) yapılmamış hesapların girişine izin verilmez.
     """
     rate_limiter.check(request, bucket="auth_login", max_requests=5, window_seconds=60)
 
@@ -877,6 +1039,13 @@ def login_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hesabınız dondurulmuş veya kapatılmış durumda.",
+        )
+
+    if not user.is_verified:
+        _issue_email_otp(db, user)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="E-posta adresiniz henüz doğrulanmamış. Yeni 6 haneli OTP kodunuz gönderildi (terminali kontrol edin).",
         )
 
     access_token = create_access_token(user.id, user.token_version)
@@ -1051,6 +1220,7 @@ def delete_and_anonymize_account(
         )
 
     deleted_user_id = current_user.id
+    db.query(EmailOTP).filter(EmailOTP.user_id == deleted_user_id).delete()
     db.query(UserScenario).filter(UserScenario.user_id == deleted_user_id).delete()
     db.query(UserRoutine).filter(UserRoutine.user_id == deleted_user_id).delete()
     db.query(UserCustomRoutine).filter(UserCustomRoutine.user_id == deleted_user_id).delete()
