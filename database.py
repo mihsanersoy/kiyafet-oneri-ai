@@ -246,6 +246,18 @@ def init_db():
                         text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 0")
                     )
                 print("[Veritabanı] users tablosuna is_verified sütunu eklendi.")
+            if "phone_number_enc" in u_cols:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("ALTER TABLE users DROP COLUMN phone_number_enc")
+                        )
+                    print("[Veritabanı] users tablosundaki eski phone_number_enc sütunu kaldırıldı.")
+                except Exception:
+                    with engine.begin() as conn:
+                        conn.execute(text("DROP TABLE IF EXISTS users"))
+                    Base.metadata.create_all(bind=engine)
+                    print("[Veritabanı] users tablosu yeni şemayla yeniden oluşturuldu.")
     except Exception as mig_exc:
         print(f"[Veritabanı] Şema kontrol uyarısı: {mig_exc}")
 
