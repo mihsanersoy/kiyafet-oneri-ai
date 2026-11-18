@@ -1148,7 +1148,92 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // TEKİL AKILLI YÖNETİM PANELİ: "RUTİNLERİM"
+          // 1. FİZİKSEL PROFİL & KOMBİN ÖNERİSİ (ANA EKRAN İLK KART)
+          Card(
+            color: const Color(0xFF0F172A),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '👕 Fiziksel Profil & Kombin Önerisi',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: kMatteWhite),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Konumunuzu ve vücut ölçünüzü seçerek anlık hava olayına uygun kişiselleştirilmiş kombin önerinizi alın.',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 14),
+                  _buildCityDistrictSelectors(
+                    selectedCity: _profileSelectedCity,
+                    selectedDistrict: _profileSelectedDistrict,
+                    onCityChanged: (city) => setState(() {
+                      _profileSelectedCity = city;
+                      _profileSelectedDistrict = TurkiyeLocations.getIlceler(city).first;
+                    }),
+                    onDistrictChanged: (dist) => setState(() => _profileSelectedDistrict = dist),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _heightCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Boy (cm)'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _weightCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Kilo (kg)'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _loading ? null : _saveProfileAndGetOutfit,
+                      icon: const Icon(Icons.checkroom),
+                      label: Text(_loading ? 'Hazırlanıyor...' : 'Profili Kaydet ve Kombinimi Üret'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_morningBriefResult != null) ...[
+            const SizedBox(height: 16),
+            Card(
+              color: const Color(0xFF1E293B),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']} (${_morningBriefResult!['hissedilen_sicaklik']}°C)',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: kMatteWhite,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(_morningBriefResult!['oneri'].toString()),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+
+          // 2. TEKİL AKILLI YÖNETİM PANELİ: "RUTİNLERİM"
           Card(
             color: const Color(0xFF0F172A),
             child: Padding(
@@ -1294,86 +1379,6 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
-
-          // FİZİKSEL PROFİL & ANLIK KOMBİN KARTI (ŞEHİR/İLÇE COMBOBOX İLE)
-          Card(
-            color: const Color(0xFF0F172A),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '👕 Fiziksel Profil & Kombin Önerisi',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
-                  ),
-                  const SizedBox(height: 14),
-                  _buildCityDistrictSelectors(
-                    selectedCity: _profileSelectedCity,
-                    selectedDistrict: _profileSelectedDistrict,
-                    onCityChanged: (city) => setState(() {
-                      _profileSelectedCity = city;
-                      _profileSelectedDistrict = TurkiyeLocations.getIlceler(city).first;
-                    }),
-                    onDistrictChanged: (dist) => setState(() => _profileSelectedDistrict = dist),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _heightCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Boy (cm)'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _weightCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Kilo (kg)'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _loading ? null : _saveProfileAndGetOutfit,
-                      icon: const Icon(Icons.checkroom),
-                      label: Text(_loading ? 'Hazırlanıyor...' : 'Profili Kaydet ve Kombinimi Üret'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_morningBriefResult != null) ...[
-            const SizedBox(height: 16),
-            Card(
-              color: const Color(0xFF1E293B),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']} (${_morningBriefResult!['hissedilen_sicaklik']}°C)',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: kMatteWhite,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(_morningBriefResult!['oneri'].toString()),
-                  ],
-                ),
-              ),
-            ),
-          ],
           const SizedBox(height: 24),
           Row(
             children: [
@@ -1402,9 +1407,9 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      _buildQuickWeatherTab(),
-      _buildTravelPackingTab(),
       _buildRoutinesAndAccountTab(),
+      _buildTravelPackingTab(),
+      _buildQuickWeatherTab(),
     ];
 
     return Scaffold(
@@ -1430,16 +1435,16 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
         onDestinationSelected: (idx) => setState(() => _selectedTabIndex = idx),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.travel_explore),
-            label: 'Hızlı Hava',
+            icon: Icon(Icons.checkroom),
+            label: 'Kombin & Rutin',
           ),
           NavigationDestination(
             icon: Icon(Icons.luggage_outlined),
             label: 'Seyahat Valizi',
           ),
           NavigationDestination(
-            icon: Icon(Icons.alarm),
-            label: 'Rutinlerim',
+            icon: Icon(Icons.cloud_outlined),
+            label: 'Hava Durumu',
           ),
         ],
       ),
