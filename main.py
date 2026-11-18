@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
-from database import User, UserRoutine, UserScenario, get_db, init_db
+from database import User, UserCustomRoutine, UserRoutine, UserScenario, get_db, init_db
 from security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
      create_access_token,
@@ -229,6 +229,15 @@ class RefreshTokenRequest(BaseModel):
 
 class AccountActionRequest(BaseModel):
     password: str = Field(..., description="İşlem onayı için mevcut kullanıcı şifresi")
+    access_token: Optional[str] = Field(
+        default=None,
+        description="Swagger Authorize butonu kullanılmadıysa doğrudan buraya Bearer Access Token yapıştırabilirsiniz",
+    )
+    email: Optional[str] = Field(
+        default=None,
+        examples=["kullanici@optiwear.app"],
+        description="Token yerine doğrudan e-posta + şifre ile doğrulama yapmak isterseniz e-posta adresiniz",
+    )
     reason: Optional[str] = Field(default=None, max_length=250, description="İsteğe bağlı ayrılma/dondurma nedeni")
 
 
@@ -286,6 +295,61 @@ class RoutineOut(BaseModel):
     updated_at: datetime
 
 
+def _compute_10_min_before(hhmm: str) -> str:
+    """HH:MM formatındaki saatten tam 10 dakika öncesini hesaplar (Örn: 08:00 -> 07:50)."""
+    parts = hhmm.split(":")
+    total_mins = (int(parts[0]) * 60 + int(parts[1]) - 10) % 1440
+    return f"{total_mins // 60:02d}:{total_mins % 60:02d}"
+
+
+class CustomRoutineCreate(BaseModel):
+    routine_title: str = Field(
+        ...,
+        min_length=2,
+        max_length=150,
+        examples=["Sabah İşe Gidiş"],
+        description="Rutin adı (Örn: Sabah İşe Gidiş, Akşam Koşusu)",
+    )
+    routine_time: str = Field(
+        ...,
+        examples=["08:00"],
+        description="Rutin saati (HH:MM formatında, bildirim 10 dk önce tetiklenir)",
+    )
+    days_of_week: Union[str, List[str]] = Field(
+        default="Pzt,Sal,Çar,Per,Cum",
+        examples=["Pzt,Sal,Çar,Per,Cum"],
+        description="Tekrarlanacak günler (Virgülle ayrılmış metin veya liste)",
+    )
+
+    @field_validator("routine_title")
+    @classmethod
+    def sanitize_title(cls, v: str) -> str:
+        cleaned = _XSS_DANGEROUS_CHARS.sub("", (v or "").strip())
+        if len(cleaned) < 2:
+            raise ValueError("Rutin başlığı en az 2 karakter olmalıdır.")
+        return cleaned
+
+    @field_validator("routine_time")
+    @classmethod
+    def validate_routine_time(cls, v: str) -> str:
+        cleaned = (v or "").strip()
+        if not _TIME_REGEX.match(cleaned):
+            raise ValueError("Rutin saati HH:MM formatında olmalıdır (Örn: 08:00).")
+        return cleaned
+
+
+class CustomRoutineOut(BaseModel):
+    id: int
+    user_id: Optional[str] = None
+    routine_title: str
+    routine_time: str
+    notify_time: str
+    days_of_week: str
+    notification_message: str
+    sound_asset: str = "routine_alert.mp3"
+    created_at: datetime
+
+
 class ScenarioCreate(BaseModel):
     scenario_text: Optional[str] = Field(
         default=None,
@@ -331,6 +395,55 @@ class RecommendationResponse(BaseModel):
     vke: float
     kullanilan_senaryo_sayisi: int
     oneri: str
+
+
+class CurrentWeatherResponse(BaseModel):
+    sehir: str
+    sicaklik: float
+    hissedilen_sicaklik: float
+    ruzgar_hizi: float
+    wmo_kodu: int
+    hava_durumu_durumu: str
+
+
+class HourlyAlertResponse(BaseModel):
+    sehir: str
+    uyari_var_mi: bool
+    sicaklik_farki: float
+    min_sicaklik: float
+    max_sicaklik: float
+    ani_hava_olayi: Optional[str] = None
+    bildirim_basligi: str
+    bildirim_mesaji: str
+
+
+class TravelDayForecast(BaseModel):
+    tarih: str
+    min_sicaklik: float
+    max_sicaklik: float
+    ruzgar_hizi: float
+    wmo_kodu: int
+    hava_durumu_durumu: str
+
+
+class TravelRecommendationRequest(BaseModel):
+    hedef_sehir: str = Field(..., examples=["Antalya"], description="Seyahat edilecek il veya şehir")
+    hedef_ilce: Optional[str] = Field(default="", examples=["Kaş"], description="İsteğe bağlı ilçe")
+    baslangic_tarihi: str = Field(..., examples=["2026-11-20"], description="Başlangıç tarihi (YYYY-MM-DD)")
+    bitis_tarihi: str = Field(..., examples=["2026-11-24"], description="Bitiş tarihi (YYYY-MM-DD)")
+    boy: float = Field(default=175.0, gt=50, lt=260)
+    kilo: float = Field(default=75.0, gt=20, lt=350)
+    terleme_egilimi: str = Field(default="Hayır")
+
+
+class TravelRecommendationResponse(BaseModel):
+    hedef_sehir: str
+    baslangic_tarihi: str
+    bitis_tarihi: str
+    gun_sayisi: int
+    vke: float
+    gunluk_tahminler: List[TravelDayForecast]
+    valiz_onerisi: str
 
 
 # ==========================================
@@ -657,7 +770,7 @@ async def generate_ai_recommendation(
 # Yardımcı Fonksiyon: User -> UserProfileOut Dönüştürücü (PII Maskeli)
 # ==========================================
 def _to_user_profile_out(user: User) -> UserProfileOut:
-    plain_phone = decrypt_pii(user.phone_number_enc)
+    plain_phone = decrypt_pii(user.phone_number)
     return UserProfileOut(
         id=user.id,
         email=user.email,
@@ -702,7 +815,7 @@ def register_user(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
-        phone_number_enc=encrypt_pii(payload.phone_number),
+        phone_number=encrypt_pii(payload.phone_number),
         is_active=True,
         token_version=1,
     )
@@ -823,13 +936,68 @@ def get_my_profile(current_user: User = Depends(get_current_active_user)):
     return _to_user_profile_out(current_user)
 
 
+def _resolve_account_target_user(
+    payload: AccountActionRequest,
+    header_user: Optional[User],
+    db: Session,
+) -> User:
+    """
+    Kullanıcıyı şu 3 yöntemden biriyle çözümler:
+    1. Swagger sağ üstteki 'Authorize 🔒' butonu (HTTP Authorization: Bearer Header)
+    2. Request Body içindeki 'access_token' alanı
+    3. Request Body içindeki 'email' (+ şifre doğrulaması) alanı
+    """
+    if header_user is not None:
+        return header_user
+
+    if payload.access_token and payload.access_token.strip() and payload.access_token.strip() != "string":
+        raw_tok = payload.access_token.strip()
+        if raw_tok.lower().startswith("bearer "):
+            raw_tok = raw_tok[7:].strip()
+        claims = decode_token(raw_tok, expected_type="access")
+        uid = claims.get("sub")
+        tv = claims.get("tv", 1)
+        user = db.query(User).filter(User.id == uid).first()
+        if not user or not user.is_active or user.token_version != tv:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Gönderilen access_token geçersiz veya süresi dolmuş.",
+            )
+        return user
+
+    if payload.email and payload.email.strip() and payload.email.strip() != "string":
+        normalized_email = payload.email.strip().lower()
+        user = db.query(User).filter(User.email == normalized_email).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Belirtilen e-posta adresine ait kullanıcı bulunamadı.",
+            )
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bu hesap zaten dondurulmuş veya silinmiş durumda.",
+            )
+        return user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=(
+            "Kimlik doğrulama bilgisi eksik. Swagger sağ üstteki 'Authorize' butonuna "
+            "access_token yapıştırabilir VEYA request body içindeki 'access_token' ya da "
+            "'email' alanlarından birini doldurabilirsiniz."
+        ),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 @app.patch(
     "/auth/account",
     tags=["Kimlik Doğrulama (Auth)"],
 )
 def freeze_account(
     payload: AccountActionRequest,
-    current_user: User = Depends(get_current_active_user),
+    header_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     """
@@ -837,6 +1005,8 @@ def freeze_account(
     - Mevcut şifreyi doğrular, is_active=False yapar ve token_version'ı artırarak
       tüm cihazlardaki açık JWT oturumlarını anında düşürür.
     """
+    current_user = _resolve_account_target_user(payload, header_user, db)
+
     if not verify_password(payload.password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -863,37 +1033,36 @@ def freeze_account(
 )
 def delete_and_anonymize_account(
     payload: AccountActionRequest,
-    current_user: User = Depends(get_current_active_user),
+    header_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     """
-    Hesap Silme & KVKK/GDPR Anonimleştirme:
+    Hesabı Kalıcı Silme (Hard-Delete):
     - Kullanıcının şifresini doğrular.
-    - Kişisel verileri (e-posta, isim, şifreli telefon) geri döndürülemez biçimde
-      anonimleştirir, is_active=False yapar ve kişisel senaryo/rutin verilerini temizler.
+    - Kullanıcının tüm rutinlerini, senaryolarını ve 'users' tablosundaki kaydını
+      veritabanından tamamen (fiziksel olarak) siler.
     """
+    current_user = _resolve_account_target_user(payload, header_user, db)
+
     if not verify_password(payload.password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Hesap silme onayı için girilen şifre hatalı.",
         )
 
-    anon_suffix = uuid.uuid4().hex[:12]
-    current_user.email = f"deleted_{anon_suffix}@anon.optiwear.local"
-    current_user.full_name = "Anonimleştirilmiş Kullanıcı"
-    current_user.phone_number_enc = ""
-    current_user.hashed_password = hash_password(uuid.uuid4().hex)
-    current_user.is_active = False
-    current_user.token_version += 1
-
-    db.query(UserScenario).filter(UserScenario.user_id == current_user.id).delete()
-    db.query(UserRoutine).filter(UserRoutine.user_id == current_user.id).delete()
+    deleted_user_id = current_user.id
+    db.query(UserScenario).filter(UserScenario.user_id == deleted_user_id).delete()
+    db.query(UserRoutine).filter(UserRoutine.user_id == deleted_user_id).delete()
+    db.query(UserCustomRoutine).filter(UserCustomRoutine.user_id == deleted_user_id).delete()
+    # Varsa daha önce anonimleştirilmiş hayalet kayıtları da temizle
+    db.query(User).filter(User.email.like("deleted_%@anon.optiwear.local")).delete(synchronize_session=False)
+    db.delete(current_user)
     db.commit()
 
-    security_logger.info(f"[AUTH] Hesap kalıcı olarak anonimleştirildi ve kapatıldı -> user_id={current_user.id}")
+    security_logger.info(f"[AUTH] Hesap veritabanından kalıcı olarak silindi (hard-delete) -> user_id={deleted_user_id}")
     return {
         "durum": "silindi",
-        "mesaj": "Hesabınız ve tüm kişisel verileriniz KVKK/GDPR kapsamında kalıcı olarak silindi.",
+        "mesaj": "Hesabınız ve tüm ilişkili verileriniz veritabanından kalıcı olarak tamamen silindi.",
     }
 
 
@@ -1003,6 +1172,106 @@ async def trigger_morning_routine_brief(
         db=db,
         current_user=current_user,
     )
+
+
+def _to_custom_routine_out(item: UserCustomRoutine) -> CustomRoutineOut:
+    notify_time = _compute_10_min_before(item.routine_time)
+    return CustomRoutineOut(
+        id=item.id,
+        user_id=item.user_id,
+        routine_title=item.routine_title,
+        routine_time=item.routine_time,
+        notify_time=notify_time,
+        days_of_week=item.days_of_week,
+        notification_message=(
+            f"🔔 '{item.routine_title}' ({item.routine_time}) rutinin yaklaşıyor! "
+            "Dışarısı serin olabilir, katmanlı ve iyi giyindiğinden emin ol."
+        ),
+        sound_asset="routine_alert.mp3",
+        created_at=item.created_at,
+    )
+
+
+@app.get(
+    "/routines/custom",
+    response_model=List[CustomRoutineOut],
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def list_custom_routines(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Kullanıcının eklediği özel günlük rutinleri (ve 10 dk önceki bildirim saatlerini) listeler."""
+    query = db.query(UserCustomRoutine)
+    if current_user is not None:
+        query = query.filter(UserCustomRoutine.user_id == current_user.id)
+    else:
+        query = query.filter(UserCustomRoutine.user_id.is_(None))
+    rows = query.order_by(UserCustomRoutine.routine_time.asc()).all()
+    return [_to_custom_routine_out(r) for r in rows]
+
+
+@app.post(
+    "/routines/custom",
+    response_model=CustomRoutineOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def create_custom_routine(
+    payload: CustomRoutineCreate,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """
+    Kullanıcının yeni bir özel rutin (Örn: 'Sabah İşe Gidiş', '08:00', 'Pzt,Sal,Çar,Per,Cum')
+    kaydetmesini sağlar ve 10 dk önceki (07:50) zamanlanmış sesli bildirim bilgisini döner.
+    """
+    if isinstance(payload.days_of_week, list):
+        days_str = ",".join(
+            _XSS_DANGEROUS_CHARS.sub("", d.strip()) for d in payload.days_of_week if d.strip()
+        )
+    else:
+        days_str = _XSS_DANGEROUS_CHARS.sub("", (payload.days_of_week or "").strip())
+
+    if not days_str:
+        days_str = "Pzt,Sal,Çar,Per,Cum,Cmt,Paz"
+
+    uid = current_user.id if current_user is not None else None
+    new_routine = UserCustomRoutine(
+        user_id=uid,
+        routine_title=payload.routine_title,
+        routine_time=payload.routine_time,
+        days_of_week=days_str[:100],
+    )
+    db.add(new_routine)
+    db.commit()
+    db.refresh(new_routine)
+    return _to_custom_routine_out(new_routine)
+
+
+@app.delete(
+    "/routines/custom/{routine_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def delete_custom_routine(
+    routine_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Kayıtlı bir özel rutini ID'sine göre siler."""
+    query = db.query(UserCustomRoutine).filter(UserCustomRoutine.id == routine_id)
+    if current_user is not None:
+        query = query.filter(UserCustomRoutine.user_id == current_user.id)
+    item = query.first()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Silinmek istenen özel rutin bulunamadı.",
+        )
+    db.delete(item)
+    db.commit()
+    return None
 
 
 # ==========================================
@@ -1204,6 +1473,285 @@ async def get_recommendation(
         vke=vke,
         kullanilan_senaryo_sayisi=len(past_scenarios),
         oneri=oneri_metni,
+    )
+
+
+# ==========================================
+# 4. HIZLI HAVA DURUMU ARAMA (YAPAY ZEKASIZ - TOKEN TASARRUFLU)
+# ==========================================
+@app.get(
+    "/weather/current",
+    response_model=CurrentWeatherResponse,
+    tags=["Hızlı Hava Durumu & Seyahat Modu"],
+)
+async def get_current_weather_quick(
+    sehir: str = "İstanbul",
+    ilce: Optional[str] = "",
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+):
+    """
+    Gemini AI'ı ÇAĞIRMADAN sadece mevcut fetch_weather_data fonksiyonunu kullanarak
+    belirtilen İl/İlçe veya koordinatın anlık hava durumunu (sıcaklık, hissedilen,
+    rüzgar hızı, WMO kodu ve hava olayı) hızlıca döner.
+    """
+    weather = await fetch_weather_data(sehir=sehir, ilce=ilce, lat=lat, lon=lon)
+    return CurrentWeatherResponse(
+        sehir=weather["resolved_city"],
+        sicaklik=weather["temp"],
+        hissedilen_sicaklik=weather["feels_like"],
+        ruzgar_hizi=weather["wind_speed"],
+        wmo_kodu=weather["wmo_code"],
+        hava_durumu_durumu=weather["weather_status"],
+    )
+
+
+@app.get(
+    "/weather/hourly-alert",
+    response_model=HourlyAlertResponse,
+    tags=["Hızlı Hava Durumu & Seyahat Modu"],
+)
+async def check_hourly_weather_shift(
+    sehir: str = "İstanbul",
+    ilce: Optional[str] = "",
+):
+    """
+    Kullanıcının şehrindeki önümüzdeki 12 saatlik (hourly) hava tahminini inceler.
+    Gün içinde sıcaklık 8°C'den fazla oynayacaksa veya aniden Yağmur/Kar/Dolu/Fırtına
+    başlayacaksa uyarı üretir (Flutter Workmanager görevi tarafından kullanılır).
+    """
+    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+    async with httpx.AsyncClient(transport=transport, timeout=10.0) as client:
+        geo_res = await client.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": ilce.strip() or sehir.strip(), "count": 1, "language": "tr", "format": "json"},
+        )
+        results = geo_res.json().get("results") or []
+        if not results:
+            raise HTTPException(status_code=404, detail="Şehir koordinatı bulunamadı.")
+        lat_val = results[0]["latitude"]
+        lon_val = results[0]["longitude"]
+        resolved_name = results[0].get("name") or sehir
+
+        meteo_res = await client.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat_val,
+                "longitude": lon_val,
+                "hourly": "temperature_2m,weather_code,wind_speed_10m",
+                "forecast_hours": 12,
+                "timezone": "auto",
+            },
+        )
+        hourly = meteo_res.json().get("hourly") or {}
+        temps = [float(t) for t in (hourly.get("temperature_2m") or [15.0])]
+        codes = [int(c) for c in (hourly.get("weather_code") or [0])]
+        winds = [float(w) for w in (hourly.get("wind_speed_10m") or [5.0])]
+
+        min_t = round(min(temps), 1)
+        max_t = round(max(temps), 1)
+        diff = round(max_t - min_t, 1)
+
+        statuses = [
+            map_wmo_weather_code(c, t, w) for c, t, w in zip(codes, temps, winds)
+        ]
+        initial_status = statuses[0] if statuses else "Güneşli"
+        severe_events = [
+            s for s in statuses[1:] if s in ("Yağmurlu", "Karlı", "Dolu", "Rüzgarlı") and s != initial_status
+        ]
+        abrupt_event = severe_events[0] if severe_events else None
+
+        has_alert = diff >= 8.0 or abrupt_event is not None
+        if has_alert:
+            reasons = []
+            if diff >= 8.0:
+                reasons.append(f"sıcaklık {min_t}°C ile {max_t}°C arasında ({diff}°C fark) değişecek")
+            if abrupt_event:
+                reasons.append(f"hava aniden '{abrupt_event}' durumuna dönecek")
+            msg = f"Dikkat! Bugün {resolved_name} konumunda {' ve '.join(reasons)}. Yanına koruyucu ek katman almayı unutma!"
+        else:
+            msg = f"{resolved_name} için önümüzdeki saatlerde ani bir hava değişimi beklenmiyor."
+
+        return HourlyAlertResponse(
+            sehir=resolved_name,
+            uyari_var_mi=has_alert,
+            sicaklik_farki=diff,
+            min_sicaklik=min_t,
+            max_sicaklik=max_t,
+            ani_hava_olayi=abrupt_event,
+            bildirim_basligi=f"OptiWear Ani Hava Uyarısı • {resolved_name}",
+            bildirim_mesaji=msg,
+        )
+
+
+# ==========================================
+# 5. SEYAHAT / BAVUL HAZIRLAMA MODU (POST /recommendation/travel)
+# ==========================================
+@app.post(
+    "/recommendation/travel",
+    response_model=TravelRecommendationResponse,
+    tags=["Hızlı Hava Durumu & Seyahat Modu"],
+)
+async def create_travel_packing_recommendation(
+    payload: TravelRecommendationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """
+    Hedef şehir ve başlangıç-bitiş tarihleri için Open-Meteo daily parametreleriyle
+    çok günlük hava durumu verisini çeker ve Gemini AI ile kullanıcının VKE/terleme
+    profiline uygun seyahat valizi ve kombin listesi hazırlar.
+    """
+    rate_limiter.check(request, bucket="travel_recommendation", max_requests=10, window_seconds=60)
+
+    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+    search_query = (payload.hedef_ilce or "").strip() or payload.hedef_sehir.strip()
+
+    async with httpx.AsyncClient(transport=transport, timeout=12.0) as client:
+        geo_res = await client.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": search_query, "count": 5, "language": "tr", "format": "json"},
+        )
+        candidates = geo_res.json().get("results") or []
+        if not candidates and payload.hedef_ilce:
+            geo_res = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": payload.hedef_sehir.strip(), "count": 5, "language": "tr", "format": "json"},
+            )
+            candidates = geo_res.json().get("results") or []
+
+        if not candidates:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"'{payload.hedef_sehir}' için konum koordinatları bulunamadı.",
+            )
+
+        best = candidates[0]
+        lat_val = best["latitude"]
+        lon_val = best["longitude"]
+        resolved_city = (
+            f"{payload.hedef_sehir.strip()}, {payload.hedef_ilce.strip()}"
+            if payload.hedef_ilce and payload.hedef_ilce.strip()
+            else (best.get("name") or payload.hedef_sehir.strip())
+        )
+
+        # Open-Meteo Daily API çağrısı (Tarih aralığı destekli, aralık dışıysa 7 günlük tahmin)
+        meteo_params = {
+            "latitude": lat_val,
+            "longitude": lon_val,
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max",
+            "timezone": "auto",
+            "start_date": payload.baslangic_tarihi.strip(),
+            "end_date": payload.bitis_tarihi.strip(),
+        }
+        meteo_res = await client.get("https://api.open-meteo.com/v1/forecast", params=meteo_params)
+        if meteo_res.status_code != 200:
+            # Eğer seçilen tarih Open-Meteo 16 günlük penceresi dışındaysa 5 günlük tahmine düş
+            fallback_params = {
+                "latitude": lat_val,
+                "longitude": lon_val,
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max",
+                "timezone": "auto",
+                "forecast_days": 5,
+            }
+            meteo_res = await client.get("https://api.open-meteo.com/v1/forecast", params=fallback_params)
+
+        daily = meteo_res.json().get("daily") or {}
+        dates = daily.get("time") or []
+        max_temps = daily.get("temperature_2m_max") or []
+        min_temps = daily.get("temperature_2m_min") or []
+        winds = daily.get("wind_speed_10m_max") or []
+        codes = daily.get("weather_code") or []
+
+        day_forecasts: List[TravelDayForecast] = []
+        for idx in range(min(len(dates), 10)):
+            d_str = str(dates[idx])
+            t_max = round(float(max_temps[idx]), 1)
+            t_min = round(float(min_temps[idx]), 1)
+            w_max = round(float(winds[idx]), 1)
+            c_val = int(codes[idx])
+            status_label = map_wmo_weather_code(c_val, (t_max + t_min) / 2.0, w_max)
+            day_forecasts.append(
+                TravelDayForecast(
+                    tarih=d_str,
+                    min_sicaklik=t_min,
+                    max_sicaklik=t_max,
+                    ruzgar_hizi=w_max,
+                    wmo_kodu=c_val,
+                    hava_durumu_durumu=status_label,
+                )
+            )
+
+    boy_m = payload.boy / 100.0
+    vke = round(payload.kilo / (boy_m ** 2), 2)
+
+    uid = current_user.id if current_user is not None else None
+    scenario_q = db.query(UserScenario)
+    if uid is not None:
+        scenario_q = scenario_q.filter(UserScenario.user_id == uid)
+    else:
+        scenario_q = scenario_q.filter(UserScenario.user_id.is_(None))
+    past_scenarios = [r.scenario_text for r in scenario_q.order_by(UserScenario.id.desc()).limit(10).all()]
+
+    days_summary = "\n".join(
+        f"- {d.tarih}: En düşük {d.min_sicaklik}°C, En yüksek {d.max_sicaklik}°C, "
+        f"Rüzgar: {d.ruzgar_hizi} km/s, Hava Olayı: {d.hava_durumu_durumu}"
+        for d in day_forecasts
+    )
+    scenarios_summary = (
+        "\n".join(f"- {s}" for s in past_scenarios)
+        if past_scenarios
+        else "- Kayıtlı geçmiş senaryo bulunmuyor."
+    )
+
+    travel_prompt = (
+        f"Kullanıcı {payload.baslangic_tarihi} ile {payload.bitis_tarihi} tarihleri arasında "
+        f"'{resolved_city}' konumuna seyahat edecek.\n"
+        f"Fiziksel Profili: Boy {payload.boy} cm, Kilo {payload.kilo} kg, VKE: {vke}, "
+        f"Hareket edince çabuk terleme eğilimi: {payload.terleme_egilimi}.\n"
+        f"Geçmiş Termal Deneyimleri:\n{scenarios_summary}\n\n"
+        f"Seyahat Günlerinin Hava Tahmini:\n{days_summary}\n\n"
+        "Görev: Bu kişinin profiline, VKE değerine ve gideceği şehirdeki günlük hava/rüzgar/yağış "
+        "durumuna uygun olarak pratik bir seyahat valizi (bavul) hazırlama listesi ve günlere göre "
+        "katmanlı kombin stratejisi hazırla. Yanıtını akıcı ve net Türkçe olarak 4-6 cümlede sun."
+    )
+
+    dummy_req = RecommendationRequest(
+        sehir=resolved_city,
+        ilce="",
+        boy=payload.boy,
+        kilo=payload.kilo,
+        terleme_egilimi=payload.terleme_egilimi,
+        gecmis_senaryolar=[travel_prompt],
+    )
+    avg_temp = (
+        round(sum((d.max_sicaklik + d.min_sicaklik) / 2.0 for d in day_forecasts) / len(day_forecasts), 1)
+        if day_forecasts
+        else 15.0
+    )
+    max_wind = max((d.ruzgar_hizi for d in day_forecasts), default=10.0)
+    primary_status = day_forecasts[0].hava_durumu_durumu if day_forecasts else "Güneşli"
+
+    valiz_metni = await generate_ai_recommendation(
+        user_data=dummy_req,
+        resolved_location=f"{resolved_city} ({len(day_forecasts)} Günlük Seyahat Valizi)",
+        temp=avg_temp,
+        feels_like=avg_temp,
+        wind_speed=max_wind,
+        weather_status=primary_status,
+        vke=vke,
+        past_scenarios=[travel_prompt],
+    )
+
+    return TravelRecommendationResponse(
+        hedef_sehir=resolved_city,
+        baslangic_tarihi=payload.baslangic_tarihi,
+        bitis_tarihi=payload.bitis_tarihi,
+        gun_sayisi=len(day_forecasts),
+        vke=vke,
+        gunluk_tahminler=day_forecasts,
+        valiz_onerisi=valiz_metni,
     )
 
 

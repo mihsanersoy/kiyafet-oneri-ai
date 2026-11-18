@@ -22,6 +22,12 @@
 *.mkv
 *.wav
 *.mp3
+!public/routine_alert.mp3
+!public/weather_shift_alert.mp3
+!mobile/assets/sounds/routine_alert.mp3
+!mobile/assets/sounds/weather_shift_alert.mp3
+!mobile/android/app/src/main/res/raw/routine_alert.mp3
+!mobile/android/app/src/main/res/raw/weather_shift_alert.mp3
 
 # ==========================================
 # Python / FastAPI

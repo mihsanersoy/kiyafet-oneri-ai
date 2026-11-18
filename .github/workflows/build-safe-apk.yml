@@ -1,0 +1,53 @@
+name: OptiWear Güvenli Android APK Derleyici
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    name: Güvenli & İmzalı Android APK Üret
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repo Kodlarını Çek
+        uses: actions/checkout@v4
+
+      - name: Java 17 Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Flutter SDK Kurulumu
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Android İskeletini ve Güvenlik Yapılandırmasını Hazırla
+        working-directory: ./mobile
+        run: |
+          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml
+          cp android/app/src/main/res/xml/network_security_config.xml /tmp/network_security_config.xml
+          flutter create . --platforms=android --org app.optiwear --project-name optiwear_mobile
+          mkdir -p android/app/src/main/res/xml android/app/src/main/res/raw
+          cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          cp /tmp/network_security_config.xml android/app/src/main/res/xml/network_security_config.xml
+          cp assets/sounds/routine_alert.mp3 android/app/src/main/res/raw/routine_alert.mp3
+          cp assets/sounds/weather_shift_alert.mp3 android/app/src/main/res/raw/weather_shift_alert.mp3
+
+      - name: Paketleri Yükle ve Release APK Derle
+        working-directory: ./mobile
+        run: |
+          flutter pub get
+          flutter build apk --release --no-tree-shake-icons
+
+      - name: İndirilebilir Güvenli APK Dosyasını Yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: OptiWear-Guvenli-Android-APK
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30

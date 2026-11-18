@@ -51,7 +51,8 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(120), nullable=False)
-    phone_number_enc = Column(String(500), nullable=False)
+    # Veritabanında Fernet/AES ile şifrelenmiş olarak saklanır (Encryption at Rest)
+    phone_number = Column(String(500), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     token_version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -64,6 +65,11 @@ class User(Base):
     )
     scenarios = relationship(
         "UserScenario",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    custom_routines = relationship(
+        "UserCustomRoutine",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -107,6 +113,30 @@ class UserRoutine(Base):
     )
 
     user = relationship("User", back_populates="routine")
+
+
+class UserCustomRoutine(Base):
+    """
+    Kullanıcının Özel Günlük Rutinleri (user_custom_routines)
+    Örn: 'Sabah İşe Gidiş' - '08:00' - 'Pzt,Sal,Çar,Per,Cum'
+    Rutin saatinden 10 dakika önce yerel/zamanlanmış bildirim tetiklemek için kullanılır.
+    """
+
+    __tablename__ = "user_custom_routines"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
+    routine_title = Column(String(150), nullable=False)
+    routine_time = Column(String(5), nullable=False)  # HH:MM
+    days_of_week = Column(String(100), default="Pzt,Sal,Çar,Per,Cum,Cmt,Paz", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="custom_routines")
 
 
 class UserScenario(Base):
@@ -165,7 +195,8 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     try:
         inspector = inspect(engine)
-        if "user_scenarios" in inspector.get_table_names():
+        table_names = inspector.get_table_names()
+        if "user_scenarios" in table_names:
             cols = [c["name"] for c in inspector.get_columns("user_scenarios")]
             if "user_id" not in cols:
                 with engine.begin() as conn:
@@ -173,6 +204,14 @@ def init_db():
                         text("ALTER TABLE user_scenarios ADD COLUMN user_id VARCHAR(36)")
                     )
                 print("[Veritabanı] user_scenarios tablosuna user_id sütunu eklendi.")
+        if "users" in table_names:
+            u_cols = [c["name"] for c in inspector.get_columns("users")]
+            if "phone_number" not in u_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE users ADD COLUMN phone_number VARCHAR(500) DEFAULT ''")
+                    )
+                print("[Veritabanı] users tablosuna phone_number sütunu eklendi.")
     except Exception as mig_exc:
         print(f"[Veritabanı] Şema kontrol uyarısı: {mig_exc}")
 

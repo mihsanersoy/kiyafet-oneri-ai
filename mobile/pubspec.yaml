@@ -1,7 +1,7 @@
 name: optiwear_mobile
-description: OptiWear - Akıllı Hava Durumu, Günlük Rutin Bildirimi ve Kişiselleştirilmiş Giyim AI Mobil Uygulaması
+description: OptiWear - Akıllı Hava Durumu, Günlük Rutin Bildirimi, Seyahat Valizi ve Kişiselleştirilmiş Giyim AI Mobil Uygulaması
 publish_to: "none"
-version: 1.0.0+1
+version: 1.2.0+3
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -11,6 +11,9 @@ dependencies:
     sdk: flutter
   dio: ^5.4.3+1
   flutter_secure_storage: ^9.2.2
+  flutter_local_notifications: ^17.2.2
+  timezone: ^0.9.4
+  workmanager: ^0.5.2
 
 dev_dependencies:
   flutter_test:
@@ -19,3 +22,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/sounds/routine_alert.mp3
+    - assets/sounds/weather_shift_alert.mp3
