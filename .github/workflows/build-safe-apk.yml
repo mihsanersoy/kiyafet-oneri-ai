@@ -12,14 +12,14 @@ permissions:
 jobs:
   build-android-apk:
     name: Güvenli & İmzalı Android APK Üret
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Repo Kodlarını Çek
         uses: actions/checkout@v4
 
       - name: Java 17 Kurulumu
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -39,6 +39,7 @@ jobs:
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml
           cp android/app/src/main/res/xml/network_security_config.xml /tmp/network_security_config.xml
 
+          rm -rf android
           flutter create . --platforms=android --org app.optiwear --project-name optiwear_mobile
 
           rm -rf lib test
@@ -75,20 +76,20 @@ jobs:
 
               compileOptions {
                   coreLibraryDesugaringEnabled true
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
+                  sourceCompatibility = JavaVersion.VERSION_1_8
+                  targetCompatibility = JavaVersion.VERSION_1_8
               }
 
               kotlinOptions {
-                  jvmTarget = JavaVersion.VERSION_17
+                  jvmTarget = "1.8"
               }
 
               defaultConfig {
                   applicationId = "app.optiwear.optiwear_mobile"
                   minSdk = 21
                   targetSdk = 34
-                  versionCode = 4
-                  versionName = "1.2.1"
+                  versionCode = 5
+                  versionName = "1.2.2"
                   multiDexEnabled true
               }
 
