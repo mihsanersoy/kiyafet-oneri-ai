@@ -400,6 +400,7 @@ class CustomRoutineOut(BaseModel):
     routine_time: str
     notify_time: str
     days_of_week: str
+    is_enabled: bool = True
     notification_message: str
     sound_asset: str = "routine_alert.mp3"
     created_at: datetime
@@ -837,10 +838,51 @@ def _to_user_profile_out(user: User) -> UserProfileOut:
     )
 
 
+def _send_smtp_otp_email_if_configured(recipient_email: str, full_name: str, otp_code: str) -> bool:
+    """
+    .env dosyasında SMTP_EMAIL ve SMTP_APP_PASSWORD tanımlıysa gerçek e-posta gönderir.
+    Tanımlı değilse yalnızca terminal loguna basar.
+    """
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "465").strip() or "465")
+    smtp_user = os.getenv("SMTP_EMAIL", "").strip()
+    smtp_pass = os.getenv("SMTP_APP_PASSWORD", "").strip()
+
+    if not smtp_user or not smtp_pass:
+        return False
+
+    try:
+        import smtplib
+        import ssl
+        from email.message import EmailMessage
+
+        msg = EmailMessage()
+        msg["Subject"] = f"OptiWear Doğrulama Kodunuz: {otp_code}"
+        msg["From"] = f"OptiWear AI <{smtp_user}>"
+        msg["To"] = recipient_email
+        msg.set_content(
+            f"Merhaba {full_name},\n\n"
+            f"OptiWear hesabınızı doğrulamak için 6 haneli tek kullanımlık kodunuz:\n\n"
+            f"   {otp_code}\n\n"
+            f"Bu kod 15 dakika boyunca geçerlidir.\n"
+            f"Eğer bu işlemi siz yapmadıysanız bu e-postayı dikkate almayınız."
+        )
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=10) as server:
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        print(f"[SMTP] Gerçek doğrulama e-postası gönderildi -> {recipient_email}", flush=True)
+        return True
+    except Exception as smtp_exc:
+        print(f"[SMTP Uyarısı] E-posta gönderilemedi ({smtp_exc}), terminaldeki kodu kullanabilirsiniz.", flush=True)
+        return False
+
+
 def _issue_email_otp(db: Session, user: User) -> str:
     """
     6 haneli kriptografik rastgele OTP üretir, email_otps tablosuna (15 dk geçerli)
-    kaydeder ve geliştirme ortamı için terminale/loga yazdırır.
+    kaydeder, SMTP ayarlıysa gerçek mail atar ve terminale yazdırır.
     """
     db.query(EmailOTP).filter(EmailOTP.user_id == user.id).delete()
     otp_code = f"{secrets.randbelow(900000) + 100000:06d}"
@@ -854,11 +896,14 @@ def _issue_email_otp(db: Session, user: User) -> str:
     db.add(otp_row)
     db.commit()
 
+    sent_real_mail = _send_smtp_otp_email_if_configured(user.email, user.full_name, otp_code)
+
     banner = (
         "\n========================================================\n"
         f"📧 [OptiWear OTP E-POSTA DOĞRULAMA KODU]\n"
         f"   Alıcı E-Posta : {user.email}\n"
         f"   6 Haneli Kod  : {otp_code}\n"
+        f"   Gerçek Mail   : {'GÖNDERİLDİ (Gelen Kutusunu Kontrol Edin)' if sent_real_mail else 'SMTP Ayarsız -> Kod Bu Terminalde!'}\n"
         f"   Geçerlilik    : 15 Dakika ({expires_at.strftime('%H:%M:%S')} UTC)\n"
         "========================================================\n"
     )
@@ -1353,6 +1398,7 @@ def _to_custom_routine_out(item: UserCustomRoutine) -> CustomRoutineOut:
         routine_time=item.routine_time,
         notify_time=notify_time,
         days_of_week=item.days_of_week,
+        is_enabled=bool(getattr(item, "is_enabled", True)),
         notification_message=(
             f"🔔 '{item.routine_title}' ({item.routine_time}) rutinin yaklaşıyor! "
             "Dışarısı serin olabilir, katmanlı ve iyi giyindiğinden emin ol."
@@ -1442,6 +1488,33 @@ def delete_custom_routine(
     db.delete(item)
     db.commit()
     return None
+
+
+@app.patch(
+    "/routines/custom/{routine_id}/toggle",
+    response_model=CustomRoutineOut,
+    tags=["Günlük Rutin & Mobil Bildirim"],
+)
+def toggle_custom_routine(
+    routine_id: int,
+    is_enabled: bool = True,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Kayıtlı bir özel rutinin bildirimini açar veya kapatır (Switch)."""
+    query = db.query(UserCustomRoutine).filter(UserCustomRoutine.id == routine_id)
+    if current_user is not None:
+        query = query.filter(UserCustomRoutine.user_id == current_user.id)
+    item = query.first()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Güncellenmek istenen rutin bulunamadı.",
+        )
+    item.is_enabled = is_enabled
+    db.commit()
+    db.refresh(item)
+    return _to_custom_routine_out(item)
 
 
 # ==========================================

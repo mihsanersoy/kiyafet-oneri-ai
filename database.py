@@ -140,6 +140,7 @@ class UserCustomRoutine(Base):
     routine_title = Column(String(150), nullable=False)
     routine_time = Column(String(5), nullable=False)  # HH:MM
     days_of_week = Column(String(100), default="Pzt,Sal,Çar,Per,Cum,Cmt,Paz", nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     user = relationship("User", back_populates="custom_routines")
@@ -258,6 +259,14 @@ def init_db():
                         conn.execute(text("DROP TABLE IF EXISTS users"))
                     Base.metadata.create_all(bind=engine)
                     print("[Veritabanı] users tablosu yeni şemayla yeniden oluşturuldu.")
+        if "user_custom_routines" in table_names:
+            cr_cols = [c["name"] for c in inspector.get_columns("user_custom_routines")]
+            if "is_enabled" not in cr_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE user_custom_routines ADD COLUMN is_enabled BOOLEAN DEFAULT 1")
+                    )
+                print("[Veritabanı] user_custom_routines tablosuna is_enabled sütunu eklendi.")
     except Exception as mig_exc:
         print(f"[Veritabanı] Şema kontrol uyarısı: {mig_exc}")
 

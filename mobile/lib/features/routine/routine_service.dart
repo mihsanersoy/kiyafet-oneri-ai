@@ -73,6 +73,18 @@ class RoutineService {
     await apiClient.dio.delete('/routines/custom/$routineId');
   }
 
+  /// PATCH /routines/custom/{id}/toggle
+  Future<Map<String, dynamic>> toggleCustomRoutine({
+    required int routineId,
+    required bool isEnabled,
+  }) async {
+    final res = await apiClient.dio.patch(
+      '/routines/custom/$routineId/toggle',
+      queryParameters: {'is_enabled': isEnabled},
+    );
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
   /// GET /weather/current (Yapay Zekasız - Hızlı Hava Durumu Arama)
   Future<Map<String, dynamic>> fetchQuickWeather({
     required String sehir,

@@ -730,13 +730,13 @@ export default function UserPreferenceForm() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                <span className="inline-block text-xs font-semibold tracking-wider uppercase text-sky-300 bg-sky-500/20 border border-sky-400/30 px-2.5 py-0.5 rounded-full">
-                  OptiWear AI
+                <span className="inline-block text-xs font-semibold tracking-wider uppercase text-slate-100 bg-white/10 border border-white/20 px-2.5 py-0.5 rounded-full">
+                  OptiWear
                 </span>
                 <span className="text-xs text-slate-400">| Mikro-Lokasyon & Termal Profil</span>
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex flex-wrap items-center gap-2">
-                <span className="bg-gradient-to-r from-sky-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight flex flex-wrap items-center gap-2">
+                <span className="text-slate-100">
                   OptiWear
                 </span>
                 <span className="text-white/80 font-normal text-lg sm:text-xl">

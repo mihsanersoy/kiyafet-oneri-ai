@@ -1,11 +1,14 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'core/background/weather_alert_worker.dart';
+import 'core/constants/turkiye_locations.dart';
 import 'core/network/api_client.dart';
 import 'core/notifications/local_notification_service.dart';
 import 'core/storage/secure_storage_service.dart';
 import 'features/auth/auth_service.dart';
 import 'features/routine/routine_service.dart';
+
+const Color kMatteWhite = Color(0xFFF1F5F9);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -61,7 +64,7 @@ class _OptiWearAppState extends State<OptiWearApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'OptiWear AI',
+      title: 'OptiWear',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         colorScheme: ColorScheme.fromSeed(
@@ -111,7 +114,6 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _infoMessage;
   String _pendingEmail = '';
 
-  // Her metin kutusunun kendi altında görünecek kırmızı küçük hata mesajları
   String? _nameError;
   String? _phoneError;
   String? _emailError;
@@ -311,10 +313,11 @@ class _AuthScreenState extends State<AuthScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'OptiWear AI',
+                      'OptiWear',
                       style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.bold,
-                            color: const Color(0xFF38BDF8),
+                            color: kMatteWhite,
+                            letterSpacing: 0.4,
                           ),
                     ),
                     const SizedBox(height: 4),
@@ -517,35 +520,33 @@ class RoutineDashboardScreen extends StatefulWidget {
 class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   int _selectedTabIndex = 0;
 
-  // Sekme 1: Hızlı Hava Durumu Arama (Yapay Zekasız)
-  final _quickCityCtrl = TextEditingController(text: 'Ankara');
-  final _quickDistrictCtrl = TextEditingController();
+  // Sekme 1: Hızlı Hava Durumu Arama (81 İl & İlçe Combobox)
+  String _quickSelectedCity = 'Ankara';
+  String _quickSelectedDistrict = 'Merkez';
   Map<String, dynamic>? _quickWeatherResult;
   bool _quickLoading = false;
 
-  // Sekme 2: Seyahat / Bavul Hazırlama Modu
-  final _travelCityCtrl = TextEditingController(text: 'Antalya');
-  final _travelDistrictCtrl = TextEditingController(text: 'Kaş');
+  // Sekme 2: Seyahat / Bavul Hazırlama Modu (81 İl & İlçe Combobox)
+  String _travelSelectedCity = 'Antalya';
+  String _travelSelectedDistrict = 'Kaş';
   final _travelStartCtrl = TextEditingController(text: '2026-11-20');
   final _travelEndCtrl = TextEditingController(text: '2026-11-24');
   Map<String, dynamic>? _travelResult;
   bool _travelLoading = false;
 
-  // Sekme 3: Rutinler & Sabah Profili
-  final _wakeTimeCtrl = TextEditingController(text: '07:30');
-  final _cityCtrl = TextEditingController(text: 'İstanbul');
-  final _districtCtrl = TextEditingController();
+  // Sekme 3: Birleştirilmiş "Rutinlerim" Paneli + Fiziksel Profil
+  final _customTitleCtrl = TextEditingController(text: 'Sabah Uyanma');
+  final _customTimeCtrl = TextEditingController(text: '07:30');
+  static const List<String> _dayShortLabels = ['P', 'S', 'Ç', 'P', 'C', 'C', 'P'];
+  static const List<String> _dayFullCodes = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+  final List<bool> _selectedDays = [true, true, true, true, true, false, false];
+  List<Map<String, dynamic>> _customRoutines = [];
+
+  String _profileSelectedCity = 'İstanbul';
+  String _profileSelectedDistrict = 'Merkez';
   final _heightCtrl = TextEditingController(text: '175');
   final _weightCtrl = TextEditingController(text: '75');
   String _sweating = 'Hayır';
-  bool _notificationsEnabled = true;
-
-  final _customTitleCtrl = TextEditingController(text: 'Sabah İşe Gidiş');
-  final _customTimeCtrl = TextEditingController(text: '08:00');
-  final _customDaysCtrl = TextEditingController(text: 'Pzt,Sal,Çar,Per,Cum');
-  List<Map<String, dynamic>> _customRoutines = [];
-  bool _smartEngagementEnabled = true;
-  List<String> _scheduledSmartSlots = [];
 
   bool _loading = false;
   String? _statusMessage;
@@ -555,19 +556,6 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   void initState() {
     super.initState();
     _loadAllRoutines();
-    _setupSmartDaytimeReminders(true);
-  }
-
-  Future<void> _setupSmartDaytimeReminders(bool enabled) async {
-    final times = await LocalNotificationService.instance.scheduleSmartDaytimeReminders(
-      enabled: enabled,
-    );
-    if (mounted) {
-      setState(() {
-        _smartEngagementEnabled = enabled;
-        _scheduledSmartSlots = times;
-      });
-    }
   }
 
   Future<void> _loadAllRoutines() async {
@@ -575,19 +563,23 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       final r = await widget.routineService.getMyRoutine();
       final customList = await widget.routineService.getCustomRoutines();
       if (!mounted) return;
+      final savedCity = (r['sehir'] ?? 'İstanbul').toString();
+      final resolvedCity = TurkiyeLocations.iller.contains(savedCity) ? savedCity : 'İstanbul';
+      final districtList = TurkiyeLocations.getIlceler(resolvedCity);
+      final savedDist = (r['ilce'] ?? '').toString();
+      final resolvedDist = districtList.contains(savedDist) ? savedDist : districtList.first;
+
       setState(() {
-        _wakeTimeCtrl.text = (r['wake_up_time'] ?? '07:30').toString();
-        _cityCtrl.text = (r['sehir'] ?? 'İstanbul').toString();
-        _districtCtrl.text = (r['ilce'] ?? '').toString();
+        _profileSelectedCity = resolvedCity;
+        _profileSelectedDistrict = resolvedDist;
         _heightCtrl.text = (r['boy'] ?? 175).toString();
         _weightCtrl.text = (r['kilo'] ?? 75).toString();
         _sweating = (r['terleme_egilimi'] ?? 'Hayır').toString();
-        _notificationsEnabled = (r['notification_enabled'] ?? true) == true;
         _customRoutines = customList;
       });
       await WeatherAlertWorker.initializeAndSchedule(
-        city: _cityCtrl.text,
-        district: _districtCtrl.text,
+        city: _profileSelectedCity,
+        district: _profileSelectedDistrict == 'Merkez' ? '' : _profileSelectedDistrict,
       );
     } catch (_) {}
   }
@@ -610,13 +602,67 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     }
   }
 
+  Widget _buildCityDistrictSelectors({
+    required String selectedCity,
+    required String selectedDistrict,
+    required ValueChanged<String> onCityChanged,
+    required ValueChanged<String> onDistrictChanged,
+  }) {
+    final districts = TurkiyeLocations.getIlceler(selectedCity);
+    final validDistrict =
+        districts.contains(selectedDistrict) ? selectedDistrict : districts.first;
+
+    return Row(
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: selectedCity,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'İl Seçin',
+              prefixIcon: Icon(Icons.location_city),
+            ),
+            items: TurkiyeLocations.iller
+                .map((city) => DropdownMenuItem(
+                      value: city,
+                      child: Text(city, overflow: TextOverflow.ellipsis),
+                    ))
+                .toList(),
+            onChanged: (val) {
+              if (val != null) onCityChanged(val);
+            },
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: validDistrict,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'İlçe Seçin',
+              prefixIcon: Icon(Icons.place_outlined),
+            ),
+            items: districts
+                .map((dist) => DropdownMenuItem(
+                      value: dist,
+                      child: Text(dist, overflow: TextOverflow.ellipsis),
+                    ))
+                .toList(),
+            onChanged: (val) {
+              if (val != null) onDistrictChanged(val);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _searchQuickWeather() async {
-    if (_quickCityCtrl.text.trim().isEmpty) return;
     setState(() => _quickLoading = true);
     try {
       final res = await widget.routineService.fetchQuickWeather(
-        sehir: _quickCityCtrl.text,
-        ilce: _quickDistrictCtrl.text,
+        sehir: _quickSelectedCity,
+        ilce: _quickSelectedDistrict == 'Merkez' ? '' : _quickSelectedDistrict,
       );
       if (mounted) setState(() => _quickWeatherResult = res);
     } catch (_) {
@@ -648,12 +694,11 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   }
 
   Future<void> _generateTravelPackingList() async {
-    if (_travelCityCtrl.text.trim().isEmpty) return;
     setState(() => _travelLoading = true);
     try {
       final res = await widget.routineService.getTravelPackingRecommendation(
-        hedefSehir: _travelCityCtrl.text,
-        hedefIlce: _travelDistrictCtrl.text,
+        hedefSehir: _travelSelectedCity,
+        hedefIlce: _travelSelectedDistrict == 'Merkez' ? '' : _travelSelectedDistrict,
         baslangicTarihi: _travelStartCtrl.text,
         bitisTarihi: _travelEndCtrl.text,
         boy: double.tryParse(_heightCtrl.text) ?? 175.0,
@@ -675,8 +720,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   Future<void> _pickCustomRoutineTime() async {
     final parts = _customTimeCtrl.text.split(':');
     final initial = TimeOfDay(
-      hour: int.tryParse(parts[0]) ?? 8,
-      minute: int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0,
+      hour: int.tryParse(parts[0]) ?? 7,
+      minute: int.tryParse(parts.length > 1 ? parts[1] : '30') ?? 30,
     );
     final picked = await showTimePicker(context: context, initialTime: initial);
     if (picked != null) {
@@ -686,10 +731,19 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     }
   }
 
+  String _getSelectedDaysString() {
+    final chosen = <String>[];
+    for (int i = 0; i < _selectedDays.length; i++) {
+      if (_selectedDays[i]) {
+        chosen.add(_dayFullCodes[i]);
+      }
+    }
+    return chosen.isEmpty ? 'Pzt,Sal,Çar,Per,Cum' : chosen.join(',');
+  }
+
   Future<void> _addCustomRoutine() async {
     final title = _customTitleCtrl.text.trim();
     final timeStr = _customTimeCtrl.text.trim();
-    final daysStr = _customDaysCtrl.text.trim();
     if (title.isEmpty || timeStr.isEmpty) return;
 
     setState(() {
@@ -697,10 +751,11 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       _statusMessage = null;
     });
     try {
+      final daysStr = _getSelectedDaysString();
       final created = await widget.routineService.createCustomRoutine(
         routineTitle: title,
         routineTime: timeStr,
-        daysOfWeek: daysStr.isEmpty ? 'Pzt,Sal,Çar,Per,Cum' : daysStr,
+        daysOfWeek: daysStr,
       );
 
       final routineId = created['id'] as int;
@@ -717,16 +772,42 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
         setState(() {
           _customRoutines = updatedList;
           _statusMessage =
-              '✓ "$title" ($timeStr) eklendi! Bildirim 10 dk önce ($notifyTime) özel sesle çalacak.';
+              '✓ "$title" ($timeStr) eklendi! 10 dk öncesine ($notifyTime) sesli bildirim kuruldu.';
         });
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _statusMessage = 'Rutin eklenirken hata oluştu (Saat HH:MM olmalı).');
+        setState(() => _statusMessage = 'Rutin eklenirken hata oluştu.');
       }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _toggleRoutineItem(Map<String, dynamic> item, bool enabled) async {
+    final id = item['id'] as int;
+    final title = (item['routine_title'] ?? 'Rutin').toString();
+    final timeStr = (item['routine_time'] ?? '08:00').toString();
+
+    setState(() {
+      item['is_enabled'] = enabled;
+    });
+
+    try {
+      await widget.routineService.toggleCustomRoutine(
+        routineId: id,
+        isEnabled: enabled,
+      );
+      if (enabled) {
+        await LocalNotificationService.instance.scheduleRoutineBefore10Min(
+          routineId: id,
+          routineTitle: title,
+          routineTimeHhMm: timeStr,
+        );
+      } else {
+        await LocalNotificationService.instance.cancelRoutineNotification(id);
+      }
+    } catch (_) {}
   }
 
   Future<void> _removeCustomRoutine(int id) async {
@@ -740,76 +821,45 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     } catch (_) {}
   }
 
-  Future<void> _saveRoutine() async {
+  Future<void> _saveProfileAndGetOutfit() async {
     setState(() {
       _loading = true;
       _statusMessage = null;
     });
     try {
       await widget.routineService.updateRoutine(
-        wakeUpTime: _wakeTimeCtrl.text.trim(),
-        sehir: _cityCtrl.text.trim(),
-        ilce: _districtCtrl.text.trim(),
+        wakeUpTime: _customTimeCtrl.text.trim(),
+        sehir: _profileSelectedCity,
+        ilce: _profileSelectedDistrict == 'Merkez' ? '' : _profileSelectedDistrict,
         boy: double.tryParse(_heightCtrl.text) ?? 175.0,
         kilo: double.tryParse(_weightCtrl.text) ?? 75.0,
         terlemeEgilimi: _sweating,
-        notificationEnabled: _notificationsEnabled,
+        notificationEnabled: true,
       );
       await WeatherAlertWorker.initializeAndSchedule(
-        city: _cityCtrl.text.trim(),
-        district: _districtCtrl.text.trim(),
+        city: _profileSelectedCity,
+        district: _profileSelectedDistrict == 'Merkez' ? '' : _profileSelectedDistrict,
       );
-      setState(() => _statusMessage = '✓ Profiliniz ve arka plan hava değişimi takipçisi güncellendi.');
-    } catch (_) {
-      setState(() => _statusMessage = 'Rutin kaydedilirken hata oluştu.');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _runMorningBrief() async {
-    setState(() {
-      _loading = true;
-      _statusMessage = null;
-    });
-    try {
-      await _saveRoutine();
       final res = await widget.routineService.triggerMorningBrief();
-      if (mounted) setState(() => _morningBriefResult = res);
+      if (mounted) {
+        setState(() {
+          _morningBriefResult = res;
+          _statusMessage = '✓ Profiliniz güncellendi ve kombin öneriniz hazırlandı.';
+        });
+      }
     } catch (_) {
-      setState(() => _statusMessage = 'Sabah kombin bildirimi alınamadı.');
+      setState(() => _statusMessage = 'Kombin önerisi alınırken hata oluştu.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _testWeatherShiftNotificationNow() async {
-    setState(() => _loading = true);
-    try {
-      final alertData = await widget.routineService.checkHourlyWeatherShift(
-        sehir: _cityCtrl.text.trim(),
-        ilce: _districtCtrl.text.trim(),
-      );
-      await LocalNotificationService.instance.showWeatherShiftAlert(
-        title: alertData['bildirim_basligi']?.toString() ?? 'OptiWear Ani Hava Uyarısı',
-        body: alertData['bildirim_mesaji']?.toString() ??
-            'Gün içinde 8°C üzeri sıcaklık değişimi veya ani yağış bekleniyor!',
-      );
-      if (mounted) {
-        setState(() => _statusMessage =
-            '⚡ Ani hava değişimi bildirimi (weather_shift_alert sesiyle) gönderildi!');
-      }
-    } catch (_) {
-      await LocalNotificationService.instance.showWeatherShiftAlert(
-        title: 'OptiWear Ani Hava Uyarısı • ${_cityCtrl.text}',
-        body: 'Dikkat! Gün içinde sıcaklık 8°C\'den fazla değişecek. Yanına ek katman almayı unutma!',
-      );
-      if (mounted) {
-        setState(() => _statusMessage =
-            '⚡ Test bildirimi (weather_shift_alert sesiyle) tetiklendi!');
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
+  /// 0 Saniye Gecikmeyle Anında Bildirim ve Özel Ses Testi
+  Future<void> _testInstantNotificationSound() async {
+    await LocalNotificationService.instance.triggerInstantRoutineTestNotification();
+    if (mounted) {
+      setState(() => _statusMessage =
+          '🔔 Bildirim ve özel ses efekti 0 saniye gecikmeyle anında tetiklendi!');
     }
   }
 
@@ -831,7 +881,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
             TextField(
               controller: passCtrl,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Onay için mevcut şifreniz'),
+              decoration: const InputDecoration(labelText: 'Mevcut Şifreniz'),
             ),
           ],
         ),
@@ -886,44 +936,30 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
         padding: const EdgeInsets.all(20),
         children: [
           Card(
-            color: const Color(0xFF0F172A).withOpacity(0.85),
+            color: const Color(0xFF0F172A).withOpacity(0.88),
             child: Padding(
               padding: const EdgeInsets.all(18),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '🔍 Hızlı Şehir Hava Durumu Arama (AI Olmadan Anlık)',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    '🔍 Hızlı Şehir Hava Durumu',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Yapay zeka tokenı harcamadan başka şehirlerin anlık sıcaklığını, rüzgarını ve WMO durumunu görün.',
+                    '81 ilden şehrinizi ve ilçenizi seçerek anlık sıcaklığı, rüzgarı ve hava olayını görüntüleyin.',
                     style: TextStyle(fontSize: 12, color: Colors.white70),
                   ),
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _quickCityCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'İl (Örn: İzmir)',
-                            prefixIcon: Icon(Icons.location_city),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _quickDistrictCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'İlçe (İsteğe Bağlı)',
-                            prefixIcon: Icon(Icons.place_outlined),
-                          ),
-                        ),
-                      ),
-                    ],
+                  _buildCityDistrictSelectors(
+                    selectedCity: _quickSelectedCity,
+                    selectedDistrict: _quickSelectedDistrict,
+                    onCityChanged: (city) => setState(() {
+                      _quickSelectedCity = city;
+                      _quickSelectedDistrict = TurkiyeLocations.getIlceler(city).first;
+                    }),
+                    onDistrictChanged: (dist) => setState(() => _quickSelectedDistrict = dist),
                   ),
                   const SizedBox(height: 14),
                   SizedBox(
@@ -952,7 +988,11 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                   children: [
                     Text(
                       _quickWeatherResult!['sehir'].toString(),
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: kMatteWhite,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Chip(
@@ -994,36 +1034,23 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  '🧳 Seyahat Valizi & Bavul Hazırlama Modu (AI)',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  '🧳 Seyahat Valizi & Bavul Hazırlama Modu',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Gideceğiniz şehrin çok günlük hava tahminini çekip VKE ve terleme profilinize göre valiz listesi çıkarır.',
+                  'Gideceğiniz şehri ve tarih aralığını seçin; fiziksel profilinize uygun bavul ve kombin listenizi hazırlayalım.',
                   style: TextStyle(fontSize: 12, color: Colors.white70),
                 ),
                 const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _travelCityCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Hedef Şehir',
-                          prefixIcon: Icon(Icons.flight_takeoff),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _travelDistrictCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'İlçe (İsteğe Bağlı)',
-                        ),
-                      ),
-                    ),
-                  ],
+                _buildCityDistrictSelectors(
+                  selectedCity: _travelSelectedCity,
+                  selectedDistrict: _travelSelectedDistrict,
+                  onCityChanged: (city) => setState(() {
+                    _travelSelectedCity = city;
+                    _travelSelectedDistrict = TurkiyeLocations.getIlceler(city).first;
+                  }),
+                  onDistrictChanged: (dist) => setState(() => _travelSelectedDistrict = dist),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -1084,7 +1111,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF38BDF8),
+                      color: kMatteWhite,
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -1121,6 +1148,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // TEKİL AKILLI YÖNETİM PANELİ: "RUTİNLERİM"
           Card(
             color: const Color(0xFF0F172A),
             child: Padding(
@@ -1129,44 +1157,73 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '🔔 Özel Günlük Rutin Ekle (10 Dk Önce Sesli Uyarı)',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    '⏰ Rutinlerim',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: kMatteWhite),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _customTitleCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Rutin Adı',
-                      hintText: 'Örn: Sabah İşe Gidiş',
-                      prefixIcon: Icon(Icons.event_note),
-                    ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Sabah uyanma, işe gidiş veya yürüyüş rutinlerinizi ekleyin. Rutin saatinden 10 dk önce sesli uyarı çalar.',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Row(
                     children: [
                       Expanded(
+                        flex: 3,
                         child: TextField(
-                          controller: _customTimeCtrl,
-                          readOnly: true,
-                          onTap: _pickCustomRoutineTime,
+                          controller: _customTitleCtrl,
                           decoration: const InputDecoration(
-                            labelText: 'Rutin Saati',
-                            prefixIcon: Icon(Icons.schedule),
+                            labelText: 'Rutin Adı',
+                            hintText: 'Örn: İşe Gidiş',
+                            prefixIcon: Icon(Icons.event_note),
                           ),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
+                        flex: 2,
                         child: TextField(
-                          controller: _customDaysCtrl,
+                          controller: _customTimeCtrl,
+                          readOnly: true,
+                          onTap: _pickCustomRoutineTime,
                           decoration: const InputDecoration(
-                            labelText: 'Günler',
-                            hintText: 'Pzt,Sal,Çar...',
-                            prefixIcon: Icon(Icons.calendar_today),
+                            labelText: 'Saat',
+                            prefixIcon: Icon(Icons.schedule),
                           ),
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Tekrarlanacak Günler',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: ToggleButtons(
+                      isSelected: _selectedDays,
+                      onPressed: (index) {
+                        setState(() {
+                          _selectedDays[index] = !_selectedDays[index];
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      selectedColor: const Color(0xFF020617),
+                      fillColor: const Color(0xFF38BDF8),
+                      color: kMatteWhite,
+                      constraints: const BoxConstraints(minWidth: 40, minHeight: 38),
+                      children: List.generate(
+                        _dayShortLabels.length,
+                        (idx) => Tooltip(
+                          message: _dayFullCodes[idx],
+                          child: Text(
+                            _dayShortLabels[idx],
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 14),
                   SizedBox(
@@ -1174,33 +1231,72 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                     child: FilledButton.icon(
                       onPressed: _loading ? null : _addCustomRoutine,
                       icon: const Icon(Icons.add_alarm),
-                      label: const Text('Rutin Ekle ve 10 Dk Öncesine Sesli Bildirim Kur'),
+                      label: const Text('Rutin Ekle'),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _testInstantNotificationSound,
+                      icon: const Icon(Icons.volume_up_outlined, color: Color(0xFF38BDF8)),
+                      label: const Text('Bildirimi Şimdi Test Et'),
+                    ),
+                  ),
+                  if (_statusMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        _statusMessage!,
+                        style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 12.5),
+                      ),
+                    ),
                   if (_customRoutines.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     const Divider(),
-                    ..._customRoutines.map(
-                      (item) => ListTile(
+                    ..._customRoutines.map((item) {
+                      final isEnabled = (item['is_enabled'] ?? true) == true;
+                      return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.notifications_active, color: Color(0xFF38BDF8)),
-                        title: Text('${item['routine_title']} • ${item['routine_time']}'),
+                        leading: Icon(
+                          isEnabled ? Icons.notifications_active : Icons.notifications_off_outlined,
+                          color: isEnabled ? const Color(0xFF38BDF8) : Colors.white38,
+                        ),
+                        title: Text(
+                          '${item['routine_title']} • ${item['routine_time']}',
+                          style: TextStyle(
+                            color: isEnabled ? kMatteWhite : Colors.white54,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         subtitle: Text(
-                          'Günler: ${item['days_of_week']} | Sesli Uyarı: ${item['notify_time']}',
-                          style: const TextStyle(fontSize: 12, color: Colors.white70),
+                          '${item['days_of_week']}  •  Uyarı: ${item['notify_time']}',
+                          style: const TextStyle(fontSize: 12, color: Colors.white60),
                         ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                          onPressed: () => _removeCustomRoutine(item['id'] as int),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Switch(
+                              value: isEnabled,
+                              onChanged: (val) => _toggleRoutineItem(item, val),
+                            ),
+                            IconButton(
+                              tooltip: 'Rutini Sil',
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                              onPressed: () => _removeCustomRoutine(item['id'] as int),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
+                      );
+                    }),
                   ],
                 ],
               ),
             ),
           ),
           const SizedBox(height: 16),
+
+          // FİZİKSEL PROFİL & ANLIK KOMBİN KARTI (ŞEHİR/İLÇE COMBOBOX İLE)
           Card(
             color: const Color(0xFF0F172A),
             child: Padding(
@@ -1209,48 +1305,18 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '⏰ Sabah Uyanma, Profil & Workmanager Hava Takibi',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    '👕 Fiziksel Profil & Kombin Önerisi',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
                   ),
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _wakeTimeCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Uyanma Saati',
-                            prefixIcon: Icon(Icons.access_time),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: SwitchListTile(
-                          title: const Text('Sabah Bildirimi', style: TextStyle(fontSize: 13)),
-                          value: _notificationsEnabled,
-                          onChanged: (v) => setState(() => _notificationsEnabled = v),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _cityCtrl,
-                          decoration: const InputDecoration(labelText: 'Sabit Şehir (İl)'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _districtCtrl,
-                          decoration: const InputDecoration(labelText: 'İlçe'),
-                        ),
-                      ),
-                    ],
+                  _buildCityDistrictSelectors(
+                    selectedCity: _profileSelectedCity,
+                    selectedDistrict: _profileSelectedDistrict,
+                    onCityChanged: (city) => setState(() {
+                      _profileSelectedCity = city;
+                      _profileSelectedDistrict = TurkiyeLocations.getIlceler(city).first;
+                    }),
+                    onDistrictChanged: (dist) => setState(() => _profileSelectedDistrict = dist),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -1273,69 +1339,12 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  if (_statusMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        _statusMessage!,
-                        style: const TextStyle(color: Colors.lightBlueAccent),
-                      ),
-                    ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _loading ? null : _saveRoutine,
-                          child: const Text('Profili Kaydet'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: _loading ? null : _runMorningBrief,
-                          child: const Text('Sabah Kombinimi Üret'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _loading ? null : _testWeatherShiftNotificationNow,
-                      icon: const Icon(Icons.thunderstorm_outlined, color: Color(0xFF38BDF8)),
-                      label: const Text('Ani Hava Değişimi Sesli Uyarısını Şimdi Test Et'),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  const Divider(),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      '🎲 Akıllı Gün İçi Hatırlatmalar (08:00 - 22:00 Rastgele)',
-                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(
-                      _smartEngagementEnabled
-                          ? 'Gece 22:00-08:00 arası sessizdir. Bugünkü rastgele saatler: ${_scheduledSmartSlots.join(" • ")}'
-                          : 'Rastgele gün içi hatırlatma bildirimleri kapalı.',
-                      style: const TextStyle(fontSize: 12, color: Colors.white70),
-                    ),
-                    value: _smartEngagementEnabled,
-                    onChanged: (val) => _setupSmartDaytimeReminders(val),
-                  ),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        await LocalNotificationService.instance.triggerRandomEngagementSampleNow();
-                        if (mounted) {
-                          setState(() => _statusMessage =
-                              '🎲 Rastgele gün içi hatırlatma bildirimi gönderildi!');
-                        }
-                      },
-                      icon: const Icon(Icons.auto_awesome, color: Colors.amberAccent),
-                      label: const Text('Rastgele Hatırlatma Bildirimini Şimdi Test Et'),
+                    child: FilledButton.icon(
+                      onPressed: _loading ? null : _saveProfileAndGetOutfit,
+                      icon: const Icon(Icons.checkroom),
+                      label: Text(_loading ? 'Hazırlanıyor...' : 'Profili Kaydet ve Kombinimi Üret'),
                     ),
                   ),
                 ],
@@ -1355,7 +1364,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                       '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']} (${_morningBriefResult!['hissedilen_sicaklik']}°C)',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF38BDF8),
+                        color: kMatteWhite,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -1400,7 +1409,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('OptiWear • ${widget.user['full_name'] ?? ''}'),
+        title: Text(
+          'OptiWear • ${widget.user['full_name'] ?? ''}',
+          style: const TextStyle(color: kMatteWhite, fontWeight: FontWeight.w600),
+        ),
         actions: [
           IconButton(
             tooltip: 'Çıkış Yap',
@@ -1427,7 +1439,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
           ),
           NavigationDestination(
             icon: Icon(Icons.alarm),
-            label: 'Rutin & Hesap',
+            label: 'Rutinlerim',
           ),
         ],
       ),
