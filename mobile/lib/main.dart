@@ -111,11 +111,74 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _infoMessage;
   String _pendingEmail = '';
 
+  // Her metin kutusunun kendi altında görünecek kırmızı küçük hata mesajları
+  String? _nameError;
+  String? _phoneError;
+  String? _emailError;
+  String? _passwordError;
+
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _otpCtrl = TextEditingController();
+
+  static final RegExp _emailRegex =
+      RegExp(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$');
+  static final RegExp _phoneRegex = RegExp(r'^\+?[0-9]{10,15}$');
+  static final RegExp _upperRegex = RegExp(r'[A-ZÇĞİÖŞÜ]');
+  static final RegExp _lowerRegex = RegExp(r'[a-zçğıöşü]');
+  static final RegExp _digitRegex = RegExp(r'\d');
+
+  bool _validateFields() {
+    String? nameErr;
+    String? phoneErr;
+    String? emailErr;
+    String? passErr;
+
+    final email = _emailCtrl.text.trim();
+    final pass = _passwordCtrl.text;
+
+    if (!_isLogin) {
+      final name = _nameCtrl.text.trim();
+      final phone = _phoneCtrl.text.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+
+      if (name.length < 2) {
+        nameErr = 'Lütfen adınızı ve soyadınızı girin (en az 2 karakter).';
+      }
+      if (!_phoneRegex.hasMatch(phone)) {
+        phoneErr = 'Telefon 10-15 rakam olmalıdır (Örn: +905551234567 veya 05551234567).';
+      }
+    }
+
+    if (email.isEmpty || !_emailRegex.hasMatch(email)) {
+      emailErr = 'Geçerli bir e-posta adresi girin (Örn: ad@ornek.com).';
+    }
+
+    if (_isLogin) {
+      if (pass.isEmpty) {
+        passErr = 'Lütfen şifrenizi girin.';
+      }
+    } else {
+      final missing = <String>[];
+      if (pass.length < 8) missing.add('en az 8 karakter');
+      if (!_upperRegex.hasMatch(pass)) missing.add('1 büyük harf');
+      if (!_lowerRegex.hasMatch(pass)) missing.add('1 küçük harf');
+      if (!_digitRegex.hasMatch(pass)) missing.add('1 rakam');
+      if (missing.isNotEmpty) {
+        passErr = 'Şifre gereksinimi eksik: ${missing.join(", ")} içermelidir.';
+      }
+    }
+
+    setState(() {
+      _nameError = nameErr;
+      _phoneError = phoneErr;
+      _emailError = emailErr;
+      _passwordError = passErr;
+    });
+
+    return nameErr == null && phoneErr == null && emailErr == null && passErr == null;
+  }
 
   String _extractError(Object err) {
     if (err is DioException) {
@@ -136,10 +199,15 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _submit() async {
     setState(() {
-      _loading = true;
       _errorMessage = null;
       _infoMessage = null;
     });
+
+    if (!_validateFields()) {
+      return;
+    }
+
+    setState(() => _loading = true);
     try {
       if (_isLogin) {
         final user = await widget.authService.login(
@@ -207,6 +275,22 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Widget _buildInlineError(String? errorText) {
+    if (errorText == null || errorText.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 5, left: 4, right: 4),
+      child: Text(
+        errorText,
+        softWrap: true,
+        style: const TextStyle(
+          color: Colors.redAccent,
+          fontSize: 11.5,
+          height: 1.35,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -240,7 +324,8 @@ class _AuthScreenState extends State<AuthScreen> {
                           : (_isLogin
                               ? 'Güvenli hesabınıza giriş yapın'
                               : 'Yeni OptiWear hesabı oluşturun'),
-                      style: const TextStyle(color: Colors.white70),
+                      softWrap: true,
+                      style: const TextStyle(color: Colors.white70, fontSize: 13.5),
                     ),
                     const SizedBox(height: 20),
                     if (_infoMessage != null)
@@ -254,7 +339,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                         child: Text(
                           _infoMessage!,
-                          style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13),
+                          softWrap: true,
+                          style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12.5),
                         ),
                       ),
                     if (_errorMessage != null)
@@ -268,7 +354,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                          softWrap: true,
+                          style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
                         ),
                       ),
                     if (_awaitingOtp) ...[
@@ -283,7 +370,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                         decoration: const InputDecoration(
-                          labelText: '6 Haneli OTP Doğrulama Kodu',
+                          labelText: '6 Haneli Doğrulama Kodu',
                           prefixIcon: Icon(Icons.verified_user_outlined),
                         ),
                       ),
@@ -309,39 +396,70 @@ class _AuthScreenState extends State<AuthScreen> {
                       if (!_isLogin) ...[
                         TextField(
                           controller: _nameCtrl,
+                          onChanged: (_) {
+                            if (_nameError != null) setState(() => _nameError = null);
+                          },
                           decoration: const InputDecoration(
-                            labelText: 'Ad Soyad (Türkçe karakter destekli)',
+                            labelText: 'Ad Soyad',
                             prefixIcon: Icon(Icons.person_outline),
                           ),
                         ),
+                        _buildInlineError(_nameError),
                         const SizedBox(height: 12),
                         TextField(
                           controller: _phoneCtrl,
                           keyboardType: TextInputType.phone,
+                          onChanged: (_) {
+                            if (_phoneError != null) setState(() => _phoneError = null);
+                          },
                           decoration: const InputDecoration(
-                            labelText: 'Telefon (+905...)',
+                            labelText: 'Telefon Numarası',
+                            hintText: '+905551234567',
                             prefixIcon: Icon(Icons.phone_outlined),
                           ),
                         ),
+                        _buildInlineError(_phoneError),
                         const SizedBox(height: 12),
                       ],
                       TextField(
                         controller: _emailCtrl,
                         keyboardType: TextInputType.emailAddress,
+                        onChanged: (_) {
+                          if (_emailError != null) setState(() => _emailError = null);
+                        },
                         decoration: const InputDecoration(
                           labelText: 'E-posta Adresi',
+                          hintText: 'ornek@eposta.com',
                           prefixIcon: Icon(Icons.email_outlined),
                         ),
                       ),
+                      _buildInlineError(_emailError),
                       const SizedBox(height: 12),
                       TextField(
                         controller: _passwordCtrl,
                         obscureText: true,
+                        onChanged: (_) {
+                          if (_passwordError != null) setState(() => _passwordError = null);
+                        },
                         decoration: const InputDecoration(
-                          labelText: 'Şifre (En az 8 karakter, Büyük/Küçük Harf + Rakam)',
+                          labelText: 'Şifre',
                           prefixIcon: Icon(Icons.lock_outline),
                         ),
                       ),
+                      if (!_isLogin)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 6, left: 4, right: 4),
+                          child: Text(
+                            'Şifreniz en az 8 karakter uzunluğunda olmalı; en az 1 büyük harf, 1 küçük harf ve 1 rakam içermelidir.',
+                            softWrap: true,
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 11.5,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      _buildInlineError(_passwordError),
                       const SizedBox(height: 24),
                       FilledButton(
                         onPressed: _loading ? null : _submit,
@@ -357,6 +475,10 @@ class _AuthScreenState extends State<AuthScreen> {
                           _isLogin = !_isLogin;
                           _errorMessage = null;
                           _infoMessage = null;
+                          _nameError = null;
+                          _phoneError = null;
+                          _emailError = null;
+                          _passwordError = null;
                         }),
                         child: Text(_isLogin
                             ? 'Hesabınız yok mu? Kayıt Olun'
@@ -912,7 +1034,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                         readOnly: true,
                         onTap: _pickTravelDateRange,
                         decoration: const InputDecoration(
-                          labelText: 'Başlangıç (YYYY-MM-DD)',
+                          labelText: 'Başlangıç Tarihi',
                           prefixIcon: Icon(Icons.date_range),
                         ),
                       ),
@@ -924,7 +1046,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                         readOnly: true,
                         onTap: _pickTravelDateRange,
                         decoration: const InputDecoration(
-                          labelText: 'Bitiş (YYYY-MM-DD)',
+                          labelText: 'Bitiş Tarihi',
                           prefixIcon: Icon(Icons.event),
                         ),
                       ),
@@ -1014,7 +1136,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                   TextField(
                     controller: _customTitleCtrl,
                     decoration: const InputDecoration(
-                      labelText: 'Rutin Adı (Örn: Sabah 08:00 İşe Gidiş)',
+                      labelText: 'Rutin Adı',
+                      hintText: 'Örn: Sabah İşe Gidiş',
                       prefixIcon: Icon(Icons.event_note),
                     ),
                   ),
@@ -1027,7 +1150,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                           readOnly: true,
                           onTap: _pickCustomRoutineTime,
                           decoration: const InputDecoration(
-                            labelText: 'Rutin Saati (HH:MM)',
+                            labelText: 'Rutin Saati',
                             prefixIcon: Icon(Icons.schedule),
                           ),
                         ),
@@ -1037,7 +1160,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                         child: TextField(
                           controller: _customDaysCtrl,
                           decoration: const InputDecoration(
-                            labelText: 'Günler (Pzt,Sal...)',
+                            labelText: 'Günler',
+                            hintText: 'Pzt,Sal,Çar...',
                             prefixIcon: Icon(Icons.calendar_today),
                           ),
                         ),
@@ -1095,7 +1219,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                         child: TextField(
                           controller: _wakeTimeCtrl,
                           decoration: const InputDecoration(
-                            labelText: 'Uyanma Saati (HH:MM)',
+                            labelText: 'Uyanma Saati',
                             prefixIcon: Icon(Icons.access_time),
                           ),
                         ),
