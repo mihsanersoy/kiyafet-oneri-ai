@@ -9,6 +9,10 @@ class LocalNotificationService {
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
+  static const String kGeneralWeatherShiftWarning =
+      'Dikkat! Gün içinde ani hava ve sıcaklık değişimi bekleniyor. '
+      'Dışarı çıkarken tedbirli ve katmanlı giyindiğinden emin ol.';
+
   Future<void> init() async {
     if (_initialized) return;
     tz.initializeTimeZones();
@@ -27,7 +31,6 @@ class LocalNotificationService {
 
     await _plugin.initialize(initSettings);
 
-    // Android 13+ (API 33+) için bildirim ve tam zamanlı alarm izinlerini otomatik iste
     final androidPlugin =
         _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.requestNotificationsPermission();
@@ -36,12 +39,14 @@ class LocalNotificationService {
     _initialized = true;
   }
 
-  /// Rutin saatinden tam 10 dakika önce (Örn: 08:00 -> 07:50) özel ses efektiyle
-  /// (routine_alert) zonedSchedule bildirimi kurar.
-  Future<void> scheduleRoutineBefore10Min({
+  /// Kullanıcının seçtiği dakika kadar önce (leadMinutes) gerçek sistem kombin
+  /// yorumunun 3-4 cümlelik kısaltılmış haliyle ve özel sesle (routine_alert) bildirim kurar.
+  Future<void> scheduleRoutineNotification({
     required int routineId,
     required String routineTitle,
     required String routineTimeHhMm,
+    required int leadMinutes,
+    required String systemCommentSummary,
   }) async {
     await init();
 
@@ -57,20 +62,24 @@ class LocalNotificationService {
       now.day,
       hour,
       minute,
-    ).subtract(const Duration(minutes: 10));
+    ).subtract(Duration(minutes: leadMinutes));
 
     if (targetTime.isBefore(now)) {
       targetTime = targetTime.add(const Duration(days: 1));
     }
 
-    const androidDetails = AndroidNotificationDetails(
-      'optiwear_routine_sound_v2',
+    final androidDetails = AndroidNotificationDetails(
+      'optiwear_routine_sound_v3',
       'OptiWear Rutin Bildirimleri',
-      channelDescription: 'Rutin saatinden 10 dakika önce özel sesli giyim uyarısı verir',
+      channelDescription: 'Rutin saatinden seçilen süre önce kişiselleştirilmiş kombin özetini bildirir',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('routine_alert'),
+      sound: const RawResourceAndroidNotificationSound('routine_alert'),
+      styleInformation: BigTextStyleInformation(
+        systemCommentSummary,
+        contentTitle: 'OptiWear • $routineTitle ($routineTimeHhMm)',
+      ),
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -80,7 +89,7 @@ class LocalNotificationService {
       sound: 'routine_alert.mp3',
     );
 
-    const notificationDetails = NotificationDetails(
+    final notificationDetails = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
@@ -88,7 +97,7 @@ class LocalNotificationService {
     await _plugin.zonedSchedule(
       routineId,
       'OptiWear • $routineTitle ($routineTimeHhMm)',
-      'Rutinin yaklaşıyor, dışarısı serin iyi giyindiğinden emin ol.',
+      systemCommentSummary,
       targetTime,
       notificationDetails,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
@@ -98,18 +107,24 @@ class LocalNotificationService {
     );
   }
 
-  /// 0 Saniye Gecikmeyle Anında Rutin Bildirim ve Ses Testi
-  Future<void> triggerInstantRoutineTestNotification() async {
+  /// 0 Saniye Gecikmeyle Anında Gerçek Sistem Kombin Yorumunun 3-4 Cümlelik Özetiyle Bildirim Testi
+  Future<void> triggerInstantRoutineTestNotification({
+    required String systemCommentSummary,
+  }) async {
     await init();
 
-    const androidDetails = AndroidNotificationDetails(
-      'optiwear_routine_sound_v2',
+    final androidDetails = AndroidNotificationDetails(
+      'optiwear_routine_sound_v3',
       'OptiWear Rutin Bildirimleri',
-      channelDescription: 'Rutin saatinden 10 dakika önce özel sesli giyim uyarısı verir',
+      channelDescription: 'Rutin saatinden seçilen süre önce kişiselleştirilmiş kombin özetini bildirir',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('routine_alert'),
+      sound: const RawResourceAndroidNotificationSound('routine_alert'),
+      styleInformation: BigTextStyleInformation(
+        systemCommentSummary,
+        contentTitle: 'OptiWear • Kişisel Kombin Özeti',
+      ),
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -121,23 +136,23 @@ class LocalNotificationService {
 
     await _plugin.show(
       99000,
-      'OptiWear • Rutin Bildirim Testi',
-      'Rutinin yaklaşıyor, dışarısı serin iyi giyindiğinden emin ol.',
-      const NotificationDetails(android: androidDetails, iOS: iosDetails),
+      'OptiWear • Kişisel Kombin Özeti',
+      systemCommentSummary,
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
     );
   }
 
-  /// 0 Saniye Gecikmeyle Anında Ani Hava Değişimi Bildirim ve Ses Testi (weather_shift_alert)
+  /// Ani Hava Değişimi Uyarısı (Genel Geçer Uyarı Metni + weather_shift_alert Sesi)
   Future<void> showWeatherShiftAlert({
-    required String title,
-    required String body,
+    String? title,
+    String? body,
   }) async {
     await init();
 
     const androidDetails = AndroidNotificationDetails(
-      'optiwear_weather_shift_sound_v2',
+      'optiwear_weather_shift_sound_v3',
       'OptiWear Ani Hava Değişimi Uyarıları',
-      channelDescription: 'Gün içinde 8°C üstü sıcaklık farkı ve ani yağış uyarıları',
+      channelDescription: 'Gün içinde ani hava ve sıcaklık değişimi uyarıları',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
@@ -153,8 +168,8 @@ class LocalNotificationService {
 
     await _plugin.show(
       99001,
-      title,
-      body,
+      title ?? 'OptiWear • Ani Hava Değişimi Uyarısı',
+      body ?? kGeneralWeatherShiftWarning,
       const NotificationDetails(android: androidDetails, iOS: iosDetails),
     );
   }

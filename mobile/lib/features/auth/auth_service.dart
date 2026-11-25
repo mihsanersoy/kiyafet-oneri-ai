@@ -8,7 +8,6 @@ class AuthService {
   AuthService({required this.apiClient, required this.storage});
 
   /// POST /auth/register
-  /// Kullanıcıyı kaydeder ve 6 haneli e-posta OTP doğrulama sürecini başlatır.
   Future<Map<String, dynamic>> register({
     required String email,
     required String password,
@@ -29,7 +28,6 @@ class AuthService {
   }
 
   /// POST /auth/verify-email
-  /// 6 haneli OTP kodunu doğrular, is_verified=True yapar ve JWT token'ları güvenli depoya kaydeder.
   Future<Map<String, dynamic>> verifyEmail({
     required String email,
     required String otpCode,
@@ -82,6 +80,33 @@ class AuthService {
   /// GET /auth/me
   Future<Map<String, dynamic>> getMyProfile() async {
     final res = await apiClient.dio.get('/auth/me');
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
+  /// PUT /auth/me
+  Future<Map<String, dynamic>> updateMyProfile({
+    String? fullName,
+    String? email,
+    String? avatarBase64,
+    String? defaultLocationName,
+    String? defaultAdmin1,
+    String? defaultCountry,
+    double? defaultLat,
+    double? defaultLon,
+  }) async {
+    final res = await apiClient.dio.put(
+      '/auth/me',
+      data: {
+        if (fullName != null) 'full_name': fullName.trim(),
+        if (email != null) 'email': email.trim(),
+        if (avatarBase64 != null) 'avatar_base64': avatarBase64,
+        if (defaultLocationName != null) 'default_location_name': defaultLocationName,
+        if (defaultAdmin1 != null) 'default_admin1': defaultAdmin1,
+        if (defaultCountry != null) 'default_country': defaultCountry,
+        if (defaultLat != null) 'default_lat': defaultLat,
+        if (defaultLon != null) 'default_lon': defaultLon,
+      },
+    );
     return Map<String, dynamic>.from(res.data as Map);
   }
 

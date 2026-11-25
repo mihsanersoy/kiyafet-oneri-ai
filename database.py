@@ -53,6 +53,12 @@ class User(Base):
     full_name = Column(String(120), nullable=False)
     # Veritabanında Fernet/AES ile şifrelenmiş olarak saklanır (Encryption at Rest)
     phone_number = Column(String(500), nullable=False)
+    avatar_base64 = Column(String, nullable=True)
+    default_location_name = Column(String(150), default="İstanbul", nullable=True)
+    default_admin1 = Column(String(150), default="İstanbul", nullable=True)
+    default_country = Column(String(100), default="Türkiye", nullable=True)
+    default_lat = Column(Float, default=41.0082, nullable=True)
+    default_lon = Column(Float, default=28.9784, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     token_version = Column(Integer, default=1, nullable=False)
@@ -140,6 +146,8 @@ class UserCustomRoutine(Base):
     routine_title = Column(String(150), nullable=False)
     routine_time = Column(String(5), nullable=False)  # HH:MM
     days_of_week = Column(String(100), default="Pzt,Sal,Çar,Per,Cum,Cmt,Paz", nullable=False)
+    lead_minutes = Column(Integer, default=15, nullable=False)
+    notification_summary = Column(String(600), nullable=True)
     is_enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -247,6 +255,18 @@ def init_db():
                         text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 0")
                     )
                 print("[Veritabanı] users tablosuna is_verified sütunu eklendi.")
+            for col_name, col_def in [
+                ("avatar_base64", "TEXT"),
+                ("default_location_name", "VARCHAR(150) DEFAULT 'İstanbul'"),
+                ("default_admin1", "VARCHAR(150) DEFAULT 'İstanbul'"),
+                ("default_country", "VARCHAR(100) DEFAULT 'Türkiye'"),
+                ("default_lat", "FLOAT DEFAULT 41.0082"),
+                ("default_lon", "FLOAT DEFAULT 28.9784"),
+            ]:
+                if col_name not in u_cols:
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
+                    print(f"[Veritabanı] users tablosuna {col_name} sütunu eklendi.")
             if "phone_number_enc" in u_cols:
                 try:
                     with engine.begin() as conn:
@@ -267,6 +287,18 @@ def init_db():
                         text("ALTER TABLE user_custom_routines ADD COLUMN is_enabled BOOLEAN DEFAULT 1")
                     )
                 print("[Veritabanı] user_custom_routines tablosuna is_enabled sütunu eklendi.")
+            if "lead_minutes" not in cr_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE user_custom_routines ADD COLUMN lead_minutes INTEGER DEFAULT 15")
+                    )
+                print("[Veritabanı] user_custom_routines tablosuna lead_minutes sütunu eklendi.")
+            if "notification_summary" not in cr_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE user_custom_routines ADD COLUMN notification_summary VARCHAR(600)")
+                    )
+                print("[Veritabanı] user_custom_routines tablosuna notification_summary sütunu eklendi.")
     except Exception as mig_exc:
         print(f"[Veritabanı] Şema kontrol uyarısı: {mig_exc}")
 

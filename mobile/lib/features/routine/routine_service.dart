@@ -5,6 +5,18 @@ class RoutineService {
 
   RoutineService({required this.apiClient});
 
+  /// GET /locations/search?q=<arama>
+  Future<List<Map<String, dynamic>>> searchGlobalLocations(String query) async {
+    final cleaned = query.trim();
+    if (cleaned.length < 2) return [];
+    final res = await apiClient.dio.get(
+      '/locations/search',
+      queryParameters: {'q': cleaned},
+    );
+    final list = res.data as List;
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
   /// GET /routines/me
   Future<Map<String, dynamic>> getMyRoutine() async {
     final res = await apiClient.dio.get('/routines/me');
@@ -16,6 +28,8 @@ class RoutineService {
     required String wakeUpTime,
     required String sehir,
     String? ilce,
+    double? lat,
+    double? lon,
     required double boy,
     required double kilo,
     required String terlemeEgilimi,
@@ -28,11 +42,39 @@ class RoutineService {
         'wake_up_time': wakeUpTime,
         'sehir': sehir,
         'ilce': ilce ?? '',
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
         'boy': boy,
         'kilo': kilo,
         'terleme_egilimi': terlemeEgilimi,
         'notification_enabled': notificationEnabled,
         if (fcmToken != null) 'fcm_token': fcmToken,
+      },
+    );
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
+  /// POST /get-recommendation (Standart / Tek Seferlik veya Varsayılan Konum Kombin Önerisi)
+  Future<Map<String, dynamic>> getOutfitRecommendation({
+    required String sehir,
+    String? ilce,
+    double? lat,
+    double? lon,
+    required double boy,
+    required double kilo,
+    required String terlemeEgilimi,
+  }) async {
+    final res = await apiClient.dio.post(
+      '/get-recommendation',
+      data: {
+        'sehir': sehir,
+        'ilce': ilce ?? '',
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        'boy': boy,
+        'kilo': kilo,
+        'terleme_egilimi': terlemeEgilimi,
+        'gecmis_senaryolar': <String>[],
       },
     );
     return Map<String, dynamic>.from(res.data as Map);
@@ -56,6 +98,7 @@ class RoutineService {
     required String routineTitle,
     required String routineTime,
     required String daysOfWeek,
+    required int leadMinutes,
   }) async {
     final res = await apiClient.dio.post(
       '/routines/custom',
@@ -63,6 +106,7 @@ class RoutineService {
         'routine_title': routineTitle,
         'routine_time': routineTime,
         'days_of_week': daysOfWeek,
+        'lead_minutes': leadMinutes,
       },
     );
     return Map<String, dynamic>.from(res.data as Map);
@@ -89,18 +133,22 @@ class RoutineService {
   Future<Map<String, dynamic>> fetchQuickWeather({
     required String sehir,
     String? ilce,
+    double? lat,
+    double? lon,
   }) async {
     final res = await apiClient.dio.get(
       '/weather/current',
       queryParameters: {
         'sehir': sehir.trim(),
         if (ilce != null && ilce.trim().isNotEmpty) 'ilce': ilce.trim(),
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
       },
     );
     return Map<String, dynamic>.from(res.data as Map);
   }
 
-  /// GET /weather/hourly-alert (Saatlik 8°C Fark ve Ani Hava Olayı Kontrolü)
+  /// GET /weather/hourly-alert
   Future<Map<String, dynamic>> checkHourlyWeatherShift({
     required String sehir,
     String? ilce,
@@ -119,6 +167,8 @@ class RoutineService {
   Future<Map<String, dynamic>> getTravelPackingRecommendation({
     required String hedefSehir,
     String? hedefIlce,
+    double? lat,
+    double? lon,
     required String baslangicTarihi,
     required String bitisTarihi,
     required double boy,
@@ -130,6 +180,8 @@ class RoutineService {
       data: {
         'hedef_sehir': hedefSehir.trim(),
         'hedef_ilce': (hedefIlce ?? '').trim(),
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
         'baslangic_tarihi': baslangicTarihi.trim(),
         'bitis_tarihi': bitisTarihi.trim(),
         'boy': boy,

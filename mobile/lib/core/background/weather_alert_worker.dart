@@ -25,9 +25,8 @@ class WeatherAlertWorker {
       final data = Map<String, dynamic>.from(res.data as Map);
       if (data['uyari_var_mi'] == true) {
         await LocalNotificationService.instance.showWeatherShiftAlert(
-          title: data['bildirim_basligi']?.toString() ?? 'OptiWear Ani Hava Uyarısı',
-          body: data['bildirim_mesaji']?.toString() ??
-              'Gün içinde ani sıcaklık veya yağış değişimi bekleniyor, hazırlıklı giyin!',
+          title: 'OptiWear • Ani Hava Değişimi Uyarısı',
+          body: LocalNotificationService.kGeneralWeatherShiftWarning,
         );
       }
     } catch (_) {}
