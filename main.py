@@ -343,6 +343,8 @@ class UserProfileUpdateRequest(BaseModel):
 class GlobalLocationItem(BaseModel):
     name: str
     admin1: str = ""
+    sehir: str = ""
+    ilce: str = ""
     country: str = ""
     country_code: str = ""
     latitude: float
@@ -1265,13 +1267,17 @@ def update_my_profile(
     if payload.default_lon is not None:
         current_user.default_lon = payload.default_lon
 
-    # Varsayılan konumu kullanıcının rutin profiliyle de senkronize et
+    # Varsayılan konumu kullanıcının rutin profiliyle de senkronize et (sehir=admin1/Samsun, ilce=name/Tekkeköy)
     routine = db.query(UserRoutine).filter(UserRoutine.user_id == current_user.id).first()
     if routine:
-        if payload.default_location_name:
-            routine.sehir = current_user.default_location_name
-        if payload.default_admin1 is not None:
-            routine.ilce = current_user.default_admin1
+        loc_name = (current_user.default_location_name or "").strip()
+        adm_name = (current_user.default_admin1 or "").strip()
+        if adm_name and _fold_tr(adm_name) != _fold_tr(loc_name):
+            routine.sehir = adm_name
+            routine.ilce = loc_name
+        else:
+            routine.sehir = adm_name or loc_name or "İstanbul"
+            routine.ilce = ""
         if payload.default_lat is not None:
             routine.lat = current_user.default_lat
         if payload.default_lon is not None:
@@ -1914,6 +1920,49 @@ async def get_recommendation(
 # ==========================================
 # 4. ULUSLARARASI KONUM ARAMA & HIZLI HAVA DURUMU
 # ==========================================
+def _fold_tr(text_val: str) -> str:
+    """Türkçe karakter duyarsız karşılaştırma için yardımcı (Örn: Tekkeköy -> tekkekoy)."""
+    s = unicodedata.normalize("NFC", (text_val or "").strip())
+    table = str.maketrans("çğıöşüÇĞİÖŞÜI", "cgiosucgiosui")
+    return s.translate(table).lower().replace("\u0307", "")
+
+
+def _format_open_meteo_candidate(r: dict) -> GlobalLocationItem:
+    name = (r.get("name") or "").strip()
+    admin1 = (r.get("admin1") or "").strip()
+    country = (r.get("country") or "").strip()
+    country_code = (r.get("country_code") or "").upper().strip()
+    lat_v = float(r.get("latitude", 0.0))
+    lon_v = float(r.get("longitude", 0.0))
+
+    # sehir & ilce ayrımı: İl ve ilçe farklıysa sehir=admin1 (Samsun), ilce=name (Tekkeköy)
+    if admin1 and _fold_tr(admin1) != _fold_tr(name):
+        sehir_val = admin1
+        ilce_val = name
+    else:
+        sehir_val = admin1 or name
+        ilce_val = ""
+
+    parts = [p for p in [name, admin1, country] if p]
+    dedup_parts: List[str] = []
+    for p in parts:
+        if not dedup_parts or _fold_tr(dedup_parts[-1]) != _fold_tr(p):
+            dedup_parts.append(p)
+    display = ", ".join(dedup_parts)
+
+    return GlobalLocationItem(
+        name=name,
+        admin1=admin1,
+        sehir=sehir_val,
+        ilce=ilce_val,
+        country=country,
+        country_code=country_code,
+        latitude=round(lat_v, 4),
+        longitude=round(lon_v, 4),
+        display_name=display,
+    )
+
+
 @app.get(
     "/locations/search",
     response_model=List[GlobalLocationItem],
@@ -1921,57 +1970,85 @@ async def get_recommendation(
 )
 async def search_global_locations(q: str = ""):
     """
-    Open-Meteo Geocoding API (language=tr, count=10) üzerinden dünyadaki tüm
-    ülke, şehir ve ilçeleri gerçek zamanlı sorgular ve hafif bir JSON listesi döner.
+    Akıllı Uluslararası & İlçe Konum Ayrıştırıcı (Open-Meteo Geocoding API, count=15, language=tr):
+    - Tek kelime ("Tekkeköy" veya "Samsun") yazıldığında doğrudan sonuçları döndürür.
+    - Birden fazla kelime ("samsun tekkekoy", "Tekkeköy Samsun", "ankara, sincan") yazıldığında
+      veya tam sorgudan sonuç dönmediğinde kelimeleri parçalar; hem son kelimeyi hem ilk kelimeyi
+      name olarak aratıp diğer kelimeyle admin1/country eşleşenleri en üste çıkarır.
     """
     query = _XSS_DANGEROUS_CHARS.sub("", (q or "").strip())
     if len(query) < 2:
         return []
 
+    tokens = [t.strip() for t in re.split(r"[\s,]+", query) if len(t.strip()) >= 2]
+    geo_url = "https://geocoding-api.open-meteo.com/v1/search"
     transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+
+    async def _fetch_open_meteo(term: str, client: httpx.AsyncClient) -> List[dict]:
+        res = await client.get(
+            geo_url,
+            params={"name": term, "count": 15, "language": "tr", "format": "json"},
+        )
+        if res.status_code != 200:
+            return []
+        return res.json().get("results") or []
+
     try:
         async with httpx.AsyncClient(transport=transport, timeout=8.0) as client:
-            res = await client.get(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                params={
-                    "name": query,
-                    "count": 10,
-                    "language": "tr",
-                    "format": "json",
-                },
-            )
-            if res.status_code != 200:
-                return []
-            raw_results = res.json().get("results") or []
-            items: List[GlobalLocationItem] = []
-            for r in raw_results:
-                name = (r.get("name") or "").strip()
-                admin1 = (r.get("admin1") or "").strip()
-                country = (r.get("country") or "").strip()
-                country_code = (r.get("country_code") or "").upper().strip()
-                lat_v = float(r.get("latitude", 0.0))
-                lon_v = float(r.get("longitude", 0.0))
+            raw_results: List[dict] = []
 
-                parts = [p for p in [name, admin1, country] if p]
-                # Tekrarlayan şehir/eyalet adını temizle (Örn: "İstanbul, İstanbul, Türkiye" -> "İstanbul, Türkiye")
-                dedup_parts: List[str] = []
-                for p in parts:
-                    if not dedup_parts or dedup_parts[-1].lower() != p.lower():
-                        dedup_parts.append(p)
-                display = ", ".join(dedup_parts)
+            if len(tokens) == 1:
+                raw_results = await _fetch_open_meteo(tokens[0], client)
+            else:
+                # Önce tam sorguyu dene, ayrıca son kelime (ilçe) ve ilk kelime (il/ilçe) aramalarını yap
+                first_tok = tokens[0]
+                last_tok = tokens[-1]
+                first_folded = _fold_tr(first_tok)
+                last_folded = _fold_tr(last_tok)
 
-                items.append(
-                    GlobalLocationItem(
-                        name=name,
-                        admin1=admin1,
-                        country=country,
-                        country_code=country_code,
-                        latitude=round(lat_v, 4),
-                        longitude=round(lon_v, 4),
-                        display_name=display,
-                    )
-                )
-            return items
+                by_last = await _fetch_open_meteo(last_tok, client)
+                by_first = await _fetch_open_meteo(first_tok, client)
+
+                scored_candidates: List[tuple] = []
+                seen_keys = set()
+
+                # 1. Son kelime (tekkekoy) name olarak aratıldı -> ilk kelime (samsun) admin1/country eşleşmesi
+                for r in by_last:
+                    key = (round(float(r.get("latitude", 0)), 3), round(float(r.get("longitude", 0)), 3))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    adm = _fold_tr(r.get("admin1") or "")
+                    cnt = _fold_tr(r.get("country") or "")
+                    nm = _fold_tr(r.get("name") or "")
+                    score = 0
+                    if first_folded in adm or first_folded in cnt:
+                        score += 100
+                    if last_folded in nm:
+                        score += 50
+                    scored_candidates.append((score, r))
+
+                # 2. Tersi ihtimal: İlk kelime (tekkekoy) name olarak aratıldı -> ikinci kelime (samsun) admin1/country eşleşmesi
+                for r in by_first:
+                    key = (round(float(r.get("latitude", 0)), 3), round(float(r.get("longitude", 0)), 3))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    adm = _fold_tr(r.get("admin1") or "")
+                    cnt = _fold_tr(r.get("country") or "")
+                    nm = _fold_tr(r.get("name") or "")
+                    score = 0
+                    if last_folded in adm or last_folded in cnt:
+                        score += 100
+                    if first_folded in nm:
+                        score += 50
+                    scored_candidates.append((score, r))
+
+                scored_candidates.sort(key=lambda x: x[0], reverse=True)
+                high_matches = [r for sc, r in scored_candidates if sc >= 100]
+                raw_results = high_matches if high_matches else [r for _, r in scored_candidates[:15]]
+
+            return [_format_open_meteo_candidate(r) for r in raw_results[:15]]
     except Exception:
         return []
 

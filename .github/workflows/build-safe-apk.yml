@@ -51,6 +51,11 @@ jobs:
           cp /tmp/network_security_config.xml android/app/src/main/res/xml/network_security_config.xml
           cp assets/sounds/routine_alert.mp3 android/app/src/main/res/raw/routine_alert.mp3
           cp assets/sounds/weather_shift_alert.mp3 android/app/src/main/res/raw/weather_shift_alert.mp3
+          cat << 'EOF' > android/app/src/main/res/raw/keep.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources xmlns:tools="http://schemas.android.com/tools"
+              tools:keep="@raw/routine_alert,@raw/weather_shift_alert" />
+          EOF
           if [ -f "../public/logo.png" ]; then
             cp ../public/logo.png assets/images/logo.png
           fi

@@ -19,11 +19,30 @@ class GlobalLocationSelection {
     required this.displayName,
   });
 
+  /// Veritabanı ve öneri istekleri için sehir = admin1 (Örn: Samsun)
+  String get sehir => admin1.trim().isNotEmpty ? admin1.trim() : name.trim();
+
+  /// Veritabanı ve öneri istekleri için ilce = name (Örn: Tekkeköy)
+  String get ilce {
+    final n = name.trim();
+    final a = admin1.trim();
+    if (a.isNotEmpty && n.toLowerCase() != a.toLowerCase()) {
+      return n;
+    }
+    return '';
+  }
+
   factory GlobalLocationSelection.fromJson(Map<String, dynamic> json) {
-    final name = (json['name'] ?? 'İstanbul').toString();
-    final admin1 = (json['admin1'] ?? '').toString();
-    final country = (json['country'] ?? '').toString();
-    final disp = (json['display_name'] ?? name).toString();
+    final name = (json['name'] ?? 'İstanbul').toString().trim();
+    final admin1 = (json['admin1'] ?? '').toString().trim();
+    final country = (json['country'] ?? '').toString().trim();
+    final parts = <String>[];
+    for (final p in [name, admin1, country]) {
+      if (p.isNotEmpty && (parts.isEmpty || parts.last.toLowerCase() != p.toLowerCase())) {
+        parts.add(p);
+      }
+    }
+    final disp = (json['display_name'] ?? parts.join(', ')).toString();
     return GlobalLocationSelection(
       name: name,
       admin1: admin1,
@@ -35,8 +54,7 @@ class GlobalLocationSelection {
   }
 }
 
-/// 300ms Debounced Uluslararası Konum Arama ve Seçim Bileşeni
-/// Statik liste gömmeden doğrudan GET /locations/search?q=<arama> uç noktasını sorgular.
+/// Akıllı İlçe & Şehir Arama Seçim Kutusu (GET /locations/search?q=<arama>)
 class GlobalLocationAutocomplete extends StatefulWidget {
   final RoutineService routineService;
   final GlobalLocationSelection initialLocation;
@@ -47,7 +65,7 @@ class GlobalLocationAutocomplete extends StatefulWidget {
     super.key,
     required this.routineService,
     required this.initialLocation,
-    this.labelText = 'Konum Ara (Ülke / Şehir / İlçe)',
+    this.labelText = 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
     required this.onLocationSelected,
   });
 
@@ -95,7 +113,7 @@ class _GlobalLocationAutocompleteState extends State<GlobalLocationAutocomplete>
     }
 
     setState(() => _searching = true);
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
+    _debounce = Timer(const Duration(milliseconds: 180), () async {
       try {
         final rawList = await widget.routineService.searchGlobalLocations(q);
         if (!mounted) return;
@@ -135,7 +153,7 @@ class _GlobalLocationAutocompleteState extends State<GlobalLocationAutocomplete>
           onChanged: _onQueryChanged,
           decoration: InputDecoration(
             labelText: widget.labelText,
-            hintText: 'Örn: Kadıköy, Londra, Tokyo, Kaş...',
+            hintText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
             prefixIcon: const Icon(Icons.public),
             suffixIcon: _searching
                 ? const Padding(
@@ -161,7 +179,7 @@ class _GlobalLocationAutocompleteState extends State<GlobalLocationAutocomplete>
         if (_results.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(top: 4),
-            constraints: const BoxConstraints(maxHeight: 210),
+            constraints: const BoxConstraints(maxHeight: 220),
             decoration: BoxDecoration(
               color: const Color(0xFF1E293B),
               borderRadius: BorderRadius.circular(12),
@@ -181,7 +199,9 @@ class _GlobalLocationAutocompleteState extends State<GlobalLocationAutocomplete>
                     style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500),
                   ),
                   subtitle: Text(
-                    '${item.latitude.toStringAsFixed(2)}, ${item.longitude.toStringAsFixed(2)}',
+                    item.ilce.isNotEmpty
+                        ? 'İlçe: ${item.ilce} • İl/Bölge: ${item.sehir}'
+                        : 'Şehir/Bölge: ${item.sehir}',
                     style: const TextStyle(fontSize: 11, color: Colors.white54),
                   ),
                   onTap: () => _selectItem(item),

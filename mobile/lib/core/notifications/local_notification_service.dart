@@ -9,6 +9,9 @@ class LocalNotificationService {
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
+  static const String _kRoutineChannelId = 'optiwear_routine_sound_v4';
+  static const String _kWeatherShiftChannelId = 'optiwear_weather_shift_sound_v4';
+
   static const String kGeneralWeatherShiftWarning =
       'Dikkat! Gün içinde ani hava ve sıcaklık değişimi bekleniyor. '
       'Dışarı çıkarken tedbirli ve katmanlı giyindiğinden emin ol.';
@@ -35,6 +38,31 @@ class LocalNotificationService {
         _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.requestNotificationsPermission();
     await androidPlugin?.requestExactAlarmsPermission();
+
+    // Android 8+ için 2 ayrı özel ses kanalını (routine_alert ve weather_shift_alert) açıkça kaydet
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _kRoutineChannelId,
+        'OptiWear Rutin Bildirimleri',
+        description: 'Rutin saatinden seçilen süre önce kişiselleştirilmiş kombin özetini bildirir',
+        importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound('routine_alert'),
+        audioAttributesUsage: AudioAttributesUsage.notification,
+      ),
+    );
+
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _kWeatherShiftChannelId,
+        'OptiWear Ani Hava Değişimi Uyarıları',
+        description: 'Gün içinde ani hava ve sıcaklık değişimi uyarıları',
+        importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound('weather_shift_alert'),
+        audioAttributesUsage: AudioAttributesUsage.notification,
+      ),
+    );
 
     _initialized = true;
   }
@@ -69,13 +97,14 @@ class LocalNotificationService {
     }
 
     final androidDetails = AndroidNotificationDetails(
-      'optiwear_routine_sound_v3',
+      _kRoutineChannelId,
       'OptiWear Rutin Bildirimleri',
       channelDescription: 'Rutin saatinden seçilen süre önce kişiselleştirilmiş kombin özetini bildirir',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
       sound: const RawResourceAndroidNotificationSound('routine_alert'),
+      audioAttributesUsage: AudioAttributesUsage.notification,
       styleInformation: BigTextStyleInformation(
         systemCommentSummary,
         contentTitle: 'OptiWear • $routineTitle ($routineTimeHhMm)',
@@ -114,13 +143,14 @@ class LocalNotificationService {
     await init();
 
     final androidDetails = AndroidNotificationDetails(
-      'optiwear_routine_sound_v3',
+      _kRoutineChannelId,
       'OptiWear Rutin Bildirimleri',
       channelDescription: 'Rutin saatinden seçilen süre önce kişiselleştirilmiş kombin özetini bildirir',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
       sound: const RawResourceAndroidNotificationSound('routine_alert'),
+      audioAttributesUsage: AudioAttributesUsage.notification,
       styleInformation: BigTextStyleInformation(
         systemCommentSummary,
         contentTitle: 'OptiWear • Kişisel Kombin Özeti',
@@ -150,13 +180,14 @@ class LocalNotificationService {
     await init();
 
     const androidDetails = AndroidNotificationDetails(
-      'optiwear_weather_shift_sound_v3',
+      _kWeatherShiftChannelId,
       'OptiWear Ani Hava Değişimi Uyarıları',
       channelDescription: 'Gün içinde ani hava ve sıcaklık değişimi uyarıları',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
       sound: RawResourceAndroidNotificationSound('weather_shift_alert'),
+      audioAttributesUsage: AudioAttributesUsage.notification,
     );
 
     const iosDetails = DarwinNotificationDetails(

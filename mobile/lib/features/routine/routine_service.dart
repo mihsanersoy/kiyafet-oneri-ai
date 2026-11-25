@@ -86,6 +86,28 @@ class RoutineService {
     return Map<String, dynamic>.from(res.data as Map);
   }
 
+  /// GET /scenarios (Kişisel Termal Hafıza / Geçmiş Deneyimler)
+  Future<List<Map<String, dynamic>>> getScenarios() async {
+    final res = await apiClient.dio.get('/scenarios');
+    final list = res.data as List;
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  /// POST /scenarios (Yeni Termal Deneyim Senaryosu Ekle)
+  Future<List<Map<String, dynamic>>> addScenario(String text) async {
+    final res = await apiClient.dio.post(
+      '/scenarios',
+      data: {'scenario_text': text.trim()},
+    );
+    final list = res.data as List;
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  /// DELETE /scenarios/{scenario_id} (Senaryo Sil)
+  Future<void> deleteScenario(int id) async {
+    await apiClient.dio.delete('/scenarios/$id');
+  }
+
   /// GET /routines/custom
   Future<List<Map<String, dynamic>>> getCustomRoutines() async {
     final res = await apiClient.dio.get('/routines/custom');

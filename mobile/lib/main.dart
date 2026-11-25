@@ -584,6 +584,16 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   final List<bool> _selectedDays = [true, true, true, true, true, false, false];
   List<Map<String, dynamic>> _customRoutines = [];
 
+  // Termal Hafıza (AI Öğrenme Geçmişi - /scenarios)
+  final _scenarioInputCtrl = TextEditingController();
+  List<Map<String, dynamic>> _scenarios = [];
+  bool _scenarioLoading = false;
+  static const List<String> _quickScenarioChips = [
+    '12°C yürüyüşte montla terledim',
+    'Rüzgarlı havada ince ceketle üşüdüm',
+    '15°C\'de fermuarlı sweatshirt çok idealdi',
+  ];
+
   // Sekme 2: Seyahat Valizi Modu (Uluslararası Konum Arama)
   GlobalLocationSelection _travelLocation = const GlobalLocationSelection(
     name: 'Antalya',
@@ -643,17 +653,46 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     try {
       final r = await widget.routineService.getMyRoutine();
       final customList = await widget.routineService.getCustomRoutines();
+      final scenarioList = await widget.routineService.getScenarios();
       if (!mounted) return;
       setState(() {
         _heightCtrl.text = (r['boy'] ?? 175).toString();
         _weightCtrl.text = (r['kilo'] ?? 75).toString();
         _sweating = (r['terleme_egilimi'] ?? 'Hayır').toString();
         _customRoutines = customList;
+        _scenarios = scenarioList;
       });
       await WeatherAlertWorker.initializeAndSchedule(
-        city: _homeLocation.name,
-        district: _homeLocation.admin1,
+        city: _homeLocation.sehir,
+        district: _homeLocation.ilce,
       );
+    } catch (_) {}
+  }
+
+  Future<void> _addScenarioText(String rawText) async {
+    final cleaned = rawText.trim();
+    if (cleaned.isEmpty) return;
+    setState(() => _scenarioLoading = true);
+    try {
+      await widget.routineService.addScenario(cleaned);
+      _scenarioInputCtrl.clear();
+      final updated = await widget.routineService.getScenarios();
+      if (mounted) {
+        setState(() => _scenarios = updated);
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _scenarioLoading = false);
+    }
+  }
+
+  Future<void> _removeScenarioItem(int id) async {
+    try {
+      await widget.routineService.deleteScenario(id);
+      final updated = await widget.routineService.getScenarios();
+      if (mounted) {
+        setState(() => _scenarios = updated);
+      }
     } catch (_) {}
   }
 
@@ -679,8 +718,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     setState(() => _quickLoading = true);
     try {
       final res = await widget.routineService.fetchQuickWeather(
-        sehir: _quickLocation.name,
-        ilce: _quickLocation.admin1,
+        sehir: _quickLocation.sehir,
+        ilce: _quickLocation.ilce,
         lat: _quickLocation.latitude,
         lon: _quickLocation.longitude,
       );
@@ -717,8 +756,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     setState(() => _travelLoading = true);
     try {
       final res = await widget.routineService.getTravelPackingRecommendation(
-        hedefSehir: _travelLocation.displayName,
-        hedefIlce: _travelLocation.admin1,
+        hedefSehir: _travelLocation.sehir,
+        hedefIlce: _travelLocation.ilce,
         lat: _travelLocation.latitude,
         lon: _travelLocation.longitude,
         baslangicTarihi: _travelStartCtrl.text,
@@ -896,8 +935,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
 
       await widget.routineService.updateRoutine(
         wakeUpTime: _customTimeCtrl.text.trim(),
-        sehir: _homeLocation.name,
-        ilce: _homeLocation.admin1,
+        sehir: _homeLocation.sehir,
+        ilce: _homeLocation.ilce,
         lat: _homeLocation.latitude,
         lon: _homeLocation.longitude,
         boy: boyVal,
@@ -907,8 +946,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       );
 
       final res = await widget.routineService.getOutfitRecommendation(
-        sehir: _homeLocation.displayName,
-        ilce: _homeLocation.admin1,
+        sehir: _homeLocation.sehir,
+        ilce: _homeLocation.ilce,
         lat: _homeLocation.latitude,
         lon: _homeLocation.longitude,
         boy: boyVal,
@@ -1009,7 +1048,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                   GlobalLocationAutocomplete(
                     routineService: widget.routineService,
                     initialLocation: _quickLocation,
-                    labelText: 'Dünya Geneli Konum Ara',
+                    labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
                     onLocationSelected: (loc) => setState(() => _quickLocation = loc),
                   ),
                   const SizedBox(height: 14),
@@ -1097,7 +1136,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                 GlobalLocationAutocomplete(
                   routineService: widget.routineService,
                   initialLocation: _travelLocation,
-                  labelText: 'Seyahat Edilecek Konum (Ülke / Şehir / İlçe)',
+                  labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
                   onLocationSelected: (loc) => setState(() => _travelLocation = loc),
                 ),
                 const SizedBox(height: 12),
@@ -1217,7 +1256,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                   GlobalLocationAutocomplete(
                     routineService: widget.routineService,
                     initialLocation: _homeLocation,
-                    labelText: 'Konum (Ülke / Şehir / İlçe)',
+                    labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
                     onLocationSelected: (loc) => setState(() => _homeLocation = loc),
                   ),
                   const SizedBox(height: 12),
@@ -1262,14 +1301,32 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']} (${_morningBriefResult!['hissedilen_sicaklik']}°C)',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: kMatteWhite,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']} (${_morningBriefResult!['hissedilen_sicaklik']}°C)',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: kMatteWhite,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF38BDF8).withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '🧠 ${_morningBriefResult!['kullanilan_senaryo_sayisi'] ?? _scenarios.length} senaryo kullanıldı',
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF38BDF8)),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(_morningBriefResult!['oneri'].toString()),
                   ],
                 ),
@@ -1278,7 +1335,105 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
           ],
           const SizedBox(height: 16),
 
-          // 2. TEKİL AKILLI YÖNETİM PANELİ: "RUTİNLERİM"
+          // 2. TERMAL HAFIZA (AI ÖĞRENME GEÇMİŞİ - GET/POST/DELETE /scenarios)
+          Card(
+            color: const Color(0xFF0F172A),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '🧠 Termal Hafıza (AI Öğrenme Geçmişi)',
+                          style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold, color: kMatteWhite),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white10,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '${_scenarios.length} kayıt',
+                          style: const TextStyle(fontSize: 11.5, color: Colors.white70),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Geçmişte hangi sıcaklıkta ne giyip terlediğinizi veya üşüdüğünüzü ekleyin; önerileriniz bu deneyimlere göre kişiselleştirilsin.',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _scenarioInputCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Deneyiminizi Yazın',
+                            hintText: 'Örn: 10 derecede yürürken kalın montla terledim',
+                            prefixIcon: Icon(Icons.psychology_outlined),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      FilledButton(
+                        onPressed: _scenarioLoading
+                            ? null
+                            : () => _addScenarioText(_scenarioInputCtrl.text),
+                        child: const Text('Ekle'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: _quickScenarioChips
+                        .map(
+                          (sample) => ActionChip(
+                            label: Text('+ $sample', style: const TextStyle(fontSize: 11.5)),
+                            onPressed: _scenarioLoading ? null : () => _addScenarioText(sample),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  if (_scenarios.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    ..._scenarios.map((sc) {
+                      final scId = sc['id'] as int;
+                      final scText = (sc['scenario_text'] ?? '').toString();
+                      return ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.memory, color: Color(0xFF38BDF8), size: 19),
+                        title: Text(
+                          scText,
+                          style: const TextStyle(fontSize: 13, color: kMatteWhite),
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Senaryoyu Sil',
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                          onPressed: () => _removeScenarioItem(scId),
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 3. TEKİL AKILLI YÖNETİM PANELİ: "RUTİNLERİM"
           Card(
             color: const Color(0xFF0F172A),
             child: Padding(
@@ -1762,7 +1917,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 GlobalLocationAutocomplete(
                   routineService: widget.routineService,
                   initialLocation: _defaultLocation,
-                  labelText: 'Varsayılan Konum (Ülke / Şehir / İlçe)',
+                  labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
                   onLocationSelected: (loc) => setState(() => _defaultLocation = loc),
                 ),
                 const SizedBox(height: 8),
