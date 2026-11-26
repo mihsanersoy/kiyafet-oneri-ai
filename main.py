@@ -85,26 +85,31 @@ OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 SYSTEM_INSTRUCTION = (
-    "Sen OptiWear'ın uzman termal konfor danışmanı ve kişisel giyim stratejistisin. "
+    "Sen OptiWear'ın uzman biyometrik termal konfor danışmanı, meteorolojik ekipman mühendisi ve kişisel giyim stratejistisin. "
     "Görevin; kullanıcının boyu, kilosu, hesaplanan Vücut Kitle Endeksi (VKE), "
     "soğukta hareket edince çabuk terleme eğilimi, bulunduğu mikro-konumun (İl/İlçe veya Koordinat) "
-    "anlık hissedilen sıcaklığı (feels_like), rüzgar hızı, anlık hava olayı (Güneşli, Yağmurlu, Karlı, "
-    "Rüzgarlı, Soğuk/Ayaz, Dolu) ve kullanıcının geçmiş deneyim senaryolarını bir arada analiz ederek "
-    "nokta atışı, gerçekçi ve kişiselleştirilmiş bir kıyafet önerisi sunmaktır.\n\n"
+    "anlık gerçek ve hissedilen sıcaklığı (feels_like), bağıl nem oranı, yağış miktarı, rüzgar hızı ve hamlesi (gusts), "
+    "anlık hava olayı (Güneşli, Yağmurlu, Karlı, Rüzgarlı, Soğuk/Ayaz, Dolu) ile kullanıcının geçmiş deneyim senaryolarını "
+    "bir arada analiz ederek nokta atışı, gerçekçi, kişiselleştirilmiş bir kıyafet VE fonksiyonel ekipman önerisi sunmaktır.\n\n"
     "Analiz İlkelerin:\n"
-    "1. VKE yüksek olan ve çabuk terleyen kişiler, hava soğuk (hatta 5°C ve altı) olsa bile "
+    "1. Termal Denge ve VKE/Terleme Stratejisi: VKE yüksek olan ve çabuk terleyen kişiler, hava soğuk (hatta 5°C ve altı) olsa bile "
     "yüksek bazal ısı üretimi nedeniyle kalın tek parça mont veya kazaklarla hızla terleyip "
-    "ardından rüzgarda üşütme riski yaşarlar. Bu kişilere ev içi konforu ve dışarı çıkarken kolayca "
-    "çıkarılıp giyilebilen katmanlı (layering), nefes alan, fermuarlı kıyafetleri öner.\n"
-    "2. Kullanıcının geçmiş senaryolarını analiz et. Örneğin geçmişte 10 derecede yürürken montla "
-    "terlediğini belirtmişse, bugünkü benzer tahminde bu hatayı tekrarlatmayacak, o veriye doğrudan "
-    "atıfta bulunan (örn: 'Geçen sefer yürürken montla terlemiştin, bu yüzden bugün...') nokta atışı bir öneri yap.\n"
-    "3. Sadece termal denge (VKE/sıcaklık) düşünme; eğer hava yağmurluysa su geçirmez dış katman veya "
-    "şemsiye, karlıysa kaymaz tabanlı bot, rüzgarlıysa rüzgarlık, dolu/fırtına varsa koruyucu kapüşonlu "
-    "dış katman gibi fonksiyonel eşyaları da senaryoya göre mutlaka öner.\n"
-    "4. Yanıtını doğrudan kullanıcıya hitap eden ('sen' diliyle), akıcı, samimi, net ve "
-    "maksimum 3-5 cümlelik temiz bir paragraf olarak Türkçe ver; madde işareti veya "
-    "markdown başlığı kullanma."
+    "ardından rüzgarda üşütme (wind-chill) riski yaşarlar. Bu kişilere ev içi konforu ve dışarı çıkarken kolayca "
+    "çıkarılıp giyilebilen katmanlı (soğan sistemi / 3-layering: nefes alan iç katman, fermuarlı orta katman, koruyucu dış kabuk) kıyafetler öner.\n"
+    "2. Termal Hafıza (Geçmiş Senaryo) Atfı: Kullanıcının geçmiş senaryolarını mutlaka analiz et. Örneğin geçmişte 10 derecede yürürken montla "
+    "terlediğini veya belirli bir rüzgarda üşüdüğünü belirtmişse, bugünkü benzer tahminde bu hatayı tekrarlatmayacak şekilde o veriye doğrudan "
+    "atıfta bulunan (örn: 'Geçmişte bu sıcaklıklarda yürürken montla terlediğin için bugün...') nokta atışı bir öneri yap.\n"
+    "3. Zorunlu Fonksiyonel Ekipman ve Ayakkabı Mühendisliği: Sadece üst/alt giyim önermekle KALMA; hava durumuna göre "
+    "kullanıcının yanına alması veya giymesi gereken AYAKKABI ve EKİPMANLARI mutlaka somut olarak belirt:\n"
+    "   - Yağmurlu havada: Şemsiye (rüzgar şiddetliyse ters dönmeye karşı rüzgar tahliyeli şemsiye veya doğrudan kapüşonlu su geçirmez yağmurluk) ve su geçirmez (waterproof/Gore-Tex) bot veya su itici ayakkabı.\n"
+    "   - Karlı veya Buzlanma riskli havada: Kaymaz tırtıklı (kauçuk/Vibram) tabanlı su geçirmez kışlık bot, termal çorap, bere, su/rüzgar geçirmez eldiven ve boyunluk/atkı.\n"
+    "   - Soğuk / Ayaz (5°C altı) havada: Soğuğu tabandan kesen kalın tabanlı bot, bere, eldiven, boyunluk ve rüzgar kesici dış katman.\n"
+    "   - Rüzgarlı (20+ km/s) havada: Rüzgar kesici (windstopper/softshell) kapüşonlu rüzgarlık, boyunluk (şiddetli rüzgarda şemsiye yerine kapüşonlu su itici dış katman).\n"
+    "   - Dolu / Fırtına durumunda: Darbe ve yağışa dayanıklı kapüşonlu sert kabuk (hardshell) mont, su geçirmez sağlam bot ve şemsiye yerine tam korumalı dış katman.\n"
+    "   - Güneşli / Açık veya Sıcak havada: UV korumalı güneş gözlüğü, şapka, nefes alan fileli (mesh) yürüyüş ayakkabısı/sneaker ve terletmeyen hafif dokulu kıyafetler.\n"
+    "4. Üslup ve Format: Yanıtını doğrudan kullanıcıya hitap eden ('sen' diliyle), akıcı, samimi, net ve "
+    "4-5 cümlelik tek bir zengin paragraf olarak Türkçe ver; madde işareti veya markdown başlığı kullanma. "
+    "Son cümlende mutlaka o günkü hava olayına uygun ayakkabı (bot/sneaker) ve ekipman (şemsiye, rüzgarlık, güneş gözlüğü, bere/eldiven vb.) tavsiyesini net şekilde vurgula."
 )
 
 PREFERRED_MODELS = [
@@ -677,12 +682,15 @@ async def fetch_weather_data(
                 else:
                     resolved_label = f"GPS Konumu ({lat:.3f}, {lon:.3f})"
 
-            # Open-Meteo'dan Sıcaklık, Hissedilen Sıcaklık, Rüzgar Hızı ve WMO weather_code çek
+            # Open-Meteo'dan Sıcaklık, Hissedilen Sıcaklık, Rüzgar, Nem, Yağış ve WMO weather_code çek
             weather_url = "https://api.open-meteo.com/v1/forecast"
             weather_params = {
                 "latitude": lat,
                 "longitude": lon,
-                "current": "temperature_2m,apparent_temperature,wind_speed_10m,weather_code",
+                "current": (
+                    "temperature_2m,apparent_temperature,wind_speed_10m,"
+                    "wind_gusts_10m,relative_humidity_2m,precipitation,weather_code,is_day"
+                ),
             }
             weather_res = await client.get(weather_url, params=weather_params)
             weather_res.raise_for_status()
@@ -698,6 +706,10 @@ async def fetch_weather_data(
             temp = round(float(current["temperature_2m"]), 1)
             feels_like = round(float(current["apparent_temperature"]), 1)
             wind_speed = round(float(current.get("wind_speed_10m", 0.0)), 1)
+            wind_gusts = round(float(current.get("wind_gusts_10m", wind_speed)), 1)
+            humidity = int(round(float(current.get("relative_humidity_2m", 55.0))))
+            precipitation = round(float(current.get("precipitation", 0.0)), 1)
+            is_day = bool(int(current.get("is_day", 1)))
             wmo_code = int(
                 current.get("weather_code", current.get("weathercode", 0))
             )
@@ -708,6 +720,10 @@ async def fetch_weather_data(
                 "temp": temp,
                 "feels_like": feels_like,
                 "wind_speed": wind_speed,
+                "wind_gusts": wind_gusts,
+                "humidity": humidity,
+                "precipitation": precipitation,
+                "is_day": is_day,
                 "wmo_code": wmo_code,
                 "weather_status": weather_status,
             }
@@ -736,6 +752,93 @@ def _extract_gemini_text(data: dict) -> Optional[str]:
     return None
 
 
+def _build_mandatory_equipment_advice(
+    weather_status: str,
+    temp: float,
+    feels_like: float,
+    wind_speed: float,
+    wmo_code: int = 0,
+    humidity: int = 55,
+    precipitation: float = 0.0,
+    is_day: bool = True,
+) -> str:
+    """
+    Meteorolojik parametrelere göre deterministik olarak zorunlu ekipman,
+    ayakkabı (bot/sneaker) ve koruyucu aksesuar listesi üretir.
+    Bu çıktı hem Gemini AI promptuna bağlam olarak gömülür hem de gerektiğinde doğrudan kullanılır.
+    """
+    equipments: List[str] = []
+
+    # 1. Yağış / Hava Olayı Bazlı Ekipmanlar (Şemsiye, Su Geçirmez Bot, Yağmurluk)
+    if weather_status == "Karlı" or wmo_code in (71, 73, 75, 77, 85, 86):
+        equipments.append(
+            "Ayakkabı olarak kaymaz tırtıklı (Vibram/kauçuk) tabanlı su geçirmez kışlık bot ve termal çorap"
+        )
+        equipments.append(
+            "Aksesuar olarak su itici kapüşonlu dış katman, bere, su/rüzgar geçirmez eldiven ve boyunluk"
+        )
+    elif weather_status == "Dolu" or wmo_code in (96, 99):
+        equipments.append(
+            "Ayakkabı olarak su geçirmez sağlam bilekli bot"
+        )
+        equipments.append(
+            "Ekipman olarak fırtınada kırılabilen şemsiye yerine darbe ve sağanağa dayanıklı kapüşonlu sert kabuk (hardshell) su geçirmez yağmurluk/mont"
+        )
+    elif weather_status == "Yağmurlu" or precipitation > 0.2 or wmo_code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95):
+        if wind_speed >= 25.0:
+            equipments.append(
+                "Şiddetli rüzgar ({:.0f} km/s) şemsiyeyi ters çevirebileceği için şemsiye yerine kapüşonlu su ve rüzgar geçirmez (waterproof) yağmurluk/dış kabuk".format(
+                    wind_speed
+                )
+            )
+        else:
+            equipments.append(
+                "Yanına mutlaka sağlam bir şemsiye ve kapüşonlu su itici (water-repellent) dış katman"
+            )
+        if feels_like <= 12.0:
+            equipments.append("Ayakkabı olarak su geçirmez (waterproof) bot")
+        else:
+            equipments.append("Ayakkabı olarak su geçirmeyen (waterproof) yürüyüş ayakkabısı veya hafif bot")
+
+    # 2. Rüzgar Bazlı Ekipmanlar
+    if wind_speed >= 20.0 and weather_status not in ("Karlı", "Dolu"):
+        equipments.append(
+            f"{wind_speed} km/s rüzgarın teri soğutup üşütmesini (wind-chill) engellemek için rüzgar kesici (windstopper/softshell) rüzgarlık"
+        )
+        if feels_like <= 10.0:
+            equipments.append("Boyun ve kulak koruyucu boyunluk/bere")
+
+    # 3. Sıcaklık / Ayaz Bazlı Ayakkabı ve Termal Ekipmanlar
+    if feels_like <= 5.0 and weather_status not in ("Karlı", "Dolu"):
+        if not any("bot" in e.lower() for e in equipments):
+            equipments.append("Soğuğu zeminden kesen kalın/termal tabanlı kışlık bot ve termal çorap")
+        equipments.append("Isı kaybını önleyen bere, eldiven ve boyunluk/atkı")
+    elif 5.0 < feels_like <= 13.0 and not any("bot" in e.lower() or "ayakkabı" in e.lower() for e in equipments):
+        equipments.append("Ayakkabı olarak soğuk ve nemden koruyan mevsimlik bot veya kapalı deri sneaker")
+
+    # 4. Güneşli / Açık / Sıcak Hava Ekipmanları
+    if weather_status == "Güneşli" and precipitation == 0.0:
+        if is_day and feels_like >= 12.0:
+            equipments.append("UV korumalı güneş gözlüğü")
+        if feels_like >= 23.0:
+            equipments.append(
+                "Güneş çarpmasına karşı şapka, nefes alan fileli (mesh) hafif yürüyüş ayakkabısı/sneaker ve su matarası"
+            )
+        elif feels_like > 13.0 and not any("ayakkabı" in e.lower() or "bot" in e.lower() for e in equipments):
+            equipments.append("Ayakkabı olarak ayağı terletmeyen nefes alabilir rahat sneaker")
+
+    # 5. Yüksek Nem Uyarısı
+    if humidity >= 75 and feels_like >= 15.0:
+        equipments.append(
+            f"%{humidity} yüksek bağıl nem terin buharlaşmasını zorlaştıracağı için pamuklu yerine hızlı kuruyan teknik/nefes alan kumaş"
+        )
+
+    if not equipments:
+        equipments.append("Günlük yürüyüşe uygun nefes alan rahat sneaker ve ani hava değişimine karşı hafif fermuarlı dış katman")
+
+    return " | ".join(equipments)
+
+
 # ==========================================
 # Dinamik Senaryo & Hava Olayı Destekli Gemini AI Öneri Motoru
 # ==========================================
@@ -748,6 +851,11 @@ async def generate_ai_recommendation(
     weather_status: str,
     vke: float,
     past_scenarios: List[str],
+    wmo_code: int = 0,
+    humidity: int = 55,
+    precipitation: float = 0.0,
+    wind_gusts: Optional[float] = None,
+    is_day: bool = True,
 ) -> str:
     load_dotenv(override=True)
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -772,7 +880,7 @@ async def generate_ai_recommendation(
             [f"  {idx + 1}. \"{s}\"" for idx, s in enumerate(past_scenarios)]
         )
         hafiza_blogu = (
-            f"Kullanıcının Geçmiş Deneyimleri (Kişisel Hafıza):\n"
+            f"Kullanıcının Geçmiş Deneyimleri (Kişisel Termal Hafıza):\n"
             f"{senaryo_listesi_metni}\n"
             f"(Önemli: Yukarıdaki geçmiş deneyimleri bugünkü {feels_like}°C hissedilen sıcaklık, "
             f"'{weather_status}' hava olayı ve {wind_speed} km/s rüzgar verisiyle kıyasla; önerinde "
@@ -781,21 +889,39 @@ async def generate_ai_recommendation(
     else:
         hafiza_blogu = "Kullanıcının Geçmiş Deneyimleri: Henüz kayıtlı geçmiş senaryo yok."
 
+    equipment_advice = _build_mandatory_equipment_advice(
+        weather_status=weather_status,
+        temp=temp,
+        feels_like=feels_like,
+        wind_speed=wind_speed,
+        wmo_code=wmo_code,
+        humidity=humidity,
+        precipitation=precipitation,
+        is_day=is_day,
+    )
+    gust_str = f" (Rüzgar Hamlesi: {wind_gusts} km/s)" if wind_gusts is not None else ""
+    day_night_str = "Gündüz" if is_day else "Gece / Akşam"
+
     user_prompt = (
         f"Kullanıcı ve Mikro-Lokasyon Hava Verileri:\n"
         f"- Konum (İl/İlçe/GPS): {resolved_location}\n"
+        f"- Zaman Dilimi: {day_night_str}\n"
         f"- Boy: {user_data.boy} cm\n"
         f"- Kilo: {user_data.kilo} kg\n"
         f"- Hesaplanan VKE (BMI): {vke}\n"
         f"- Soğukta hareket edince çabuk terleme eğilimi: {terleme_metni}\n"
-        f"- Anlık Hava Olayı: {weather_status}\n"
+        f"- Anlık Hava Olayı: {weather_status} (WMO Kodu: {wmo_code})\n"
         f"- Anlık Gerçek Sıcaklık: {temp}°C\n"
         f"- Anlık Hissedilen Sıcaklık (feels_like): {feels_like}°C\n"
-        f"- Anlık Rüzgar Hızı: {wind_speed} km/s\n\n"
+        f"- Anlık Rüzgar Hızı: {wind_speed} km/s{gust_str}\n"
+        f"- Bağıl Nem: %{humidity} | Anlık Yağış: {precipitation} mm\n\n"
+        f"Meteorolojik Ekipman Motorunun Tespit Ettiği Zorunlu Ekipman ve Ayakkabılar:\n"
+        f"- {equipment_advice}\n\n"
         f"{hafiza_blogu}\n\n"
-        f"Bu verilere göre kullanıcıya hem termal dengeyi koruyacak hem de '{weather_status}' hava olayına "
-        f"uygun fonksiyonel parçaları (yağmurluysa su geçirmez katman/şemsiye, karlıysa kaymaz bot, "
-        f"rüzgarlıysa rüzgarlık vb.) içeren ev içi ve dış ortam kıyafet kombin önerisini yaz."
+        f"Görev: Bu verilere göre kullanıcıya hem termal dengeyi (iç, orta, dış katman) koruyacak "
+        f"hem de yukarıdaki zorunlu ekipman/ayakkabı tespitlerini (örneğin yağmurluysa şemsiye ve su geçirmez bot, "
+        f"karlıysa kaymaz tabanlı kışlık bot ve bere/eldiven, rüzgarlıysa rüzgarlık, güneşliyse güneş gözlüğü ve nefes alan sneaker vb.) "
+        f"doğrudan cümle içinde nedenleriyle belirten 4-5 cümlelik akıcı bir kombin ve ekipman önerisi yaz."
     )
 
     payload = {
@@ -809,8 +935,8 @@ async def generate_ai_recommendation(
             }
         ],
         "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 450,
+            "temperature": 0.65,
+            "maxOutputTokens": 650,
         },
     }
 
@@ -1640,6 +1766,11 @@ async def create_custom_routine(
             weather_status=weather["weather_status"],
             vke=vke,
             past_scenarios=past_sc,
+            wmo_code=weather.get("wmo_code", 0),
+            humidity=weather.get("humidity", 55),
+            precipitation=weather.get("precipitation", 0.0),
+            wind_gusts=weather.get("wind_gusts"),
+            is_day=weather.get("is_day", True),
         )
         ai_short_summary = _shorten_to_3_4_sentences(full_ai_text)
     except Exception:
@@ -1902,6 +2033,11 @@ async def get_recommendation(
         weather_status=weather["weather_status"],
         vke=vke,
         past_scenarios=past_scenarios,
+        wmo_code=weather.get("wmo_code", 0),
+        humidity=weather.get("humidity", 55),
+        precipitation=weather.get("precipitation", 0.0),
+        wind_gusts=weather.get("wind_gusts"),
+        is_day=weather.get("is_day", True),
     )
 
     return RecommendationResponse(
@@ -2294,8 +2430,11 @@ async def create_travel_packing_recommendation(
         f"Geçmiş Termal Deneyimleri:\n{scenarios_summary}\n\n"
         f"Seyahat Günlerinin Hava Tahmini:\n{days_summary}\n\n"
         "Görev: Bu kişinin profiline, VKE değerine ve gideceği şehirdeki günlük hava/rüzgar/yağış "
-        "durumuna uygun olarak pratik bir seyahat valizi (bavul) hazırlama listesi ve günlere göre "
-        "katmanlı kombin stratejisi hazırla. Yanıtını akıcı ve net Türkçe olarak 4-6 cümlede sun."
+        "durumuna uygun olarak pratik bir seyahat valizi (bavul) hazırlama listesi, günlere göre "
+        "katmanlı kombin stratejisi VE bavula konulması zorunlu ayakkabı/ekipmanları (yağmurlu gün varsa şemsiye "
+        "ve su geçirmez bot, karlı/soğuk gün varsa kaymaz tabanlı kışlık bot ve bere/eldiven, rüzgarlı gün varsa "
+        "rüzgarlık, güneşli gün varsa güneş gözlüğü ve nefes alan yürüyüş ayakkabısı) hazırla. "
+        "Yanıtını akıcı ve net Türkçe olarak 4-6 cümlede sun."
     )
 
     dummy_req = RecommendationRequest(
