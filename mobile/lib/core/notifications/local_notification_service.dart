@@ -36,8 +36,6 @@ class LocalNotificationService {
 
     final androidPlugin =
         _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.requestNotificationsPermission();
-    await androidPlugin?.requestExactAlarmsPermission();
 
     // Android 8+ için 2 ayrı özel ses kanalını (routine_alert ve weather_shift_alert) açıkça kaydet
     await androidPlugin?.createNotificationChannel(
@@ -65,6 +63,13 @@ class LocalNotificationService {
     );
 
     _initialized = true;
+
+    // İzin diyaloglarını runApp() sonrasına bırak (await etmeden çağır ki uygulama açılışta siyah ekranda asılı kalmasın)
+    Future.delayed(const Duration(milliseconds: 900), () async {
+      try {
+        await androidPlugin?.requestNotificationsPermission();
+      } catch (_) {}
+    });
   }
 
   /// Kullanıcının seçtiği dakika kadar önce (leadMinutes) gerçek sistem kombin

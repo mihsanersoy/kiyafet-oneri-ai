@@ -14,10 +14,8 @@ import 'features/auth/auth_service.dart';
 import 'features/routine/routine_service.dart';
 import 'features/scenario/scenario_list_screen.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await LocalNotificationService.instance.init();
-  await WeatherAlertWorker.initializeAndSchedule();
   runApp(const OptiWearApp());
 }
 
@@ -50,6 +48,14 @@ class _OptiWearAppState extends State<OptiWearApp> {
     _authService = AuthService(apiClient: _apiClient, storage: _storage);
     _routineService = RoutineService(apiClient: _apiClient);
     _restoreSession();
+    _initBackgroundServicesSafely();
+  }
+
+  Future<void> _initBackgroundServicesSafely() async {
+    try {
+      await LocalNotificationService.instance.init();
+      await WeatherAlertWorker.initializeAndSchedule();
+    } catch (_) {}
   }
 
   bool get _isNightHours {
