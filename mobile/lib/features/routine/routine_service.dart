@@ -86,9 +86,19 @@ class RoutineService {
     return Map<String, dynamic>.from(res.data as Map);
   }
 
-  /// GET /scenarios (Kişisel Termal Hafıza / Geçmiş Deneyimler)
-  Future<List<Map<String, dynamic>>> getScenarios() async {
-    final res = await apiClient.dio.get('/scenarios');
+  /// GET /scenarios (Kişisel Termal Hafıza / Geçmiş Deneyimler - opsiyonel limit/offset destekli)
+  Future<List<Map<String, dynamic>>> getScenarios({
+    int? limit,
+    int? offset,
+  }) async {
+    final queryParams = <String, dynamic>{};
+    if (limit != null) queryParams['limit'] = limit;
+    if (offset != null) queryParams['offset'] = offset;
+
+    final res = await apiClient.dio.get(
+      '/scenarios',
+      queryParameters: queryParams.isEmpty ? null : queryParams,
+    );
     final list = res.data as List;
     return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
@@ -103,9 +113,21 @@ class RoutineService {
     return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
-  /// DELETE /scenarios/{scenario_id} (Senaryo Sil)
+  /// DELETE /scenarios/{scenario_id} (Tekil Senaryo Sil)
   Future<void> deleteScenario(int id) async {
     await apiClient.dio.delete('/scenarios/$id');
+  }
+
+  /// POST /scenarios/bulk-delete (Toplu Senaryo Sil - tek transaction, max 100 ID)
+  Future<Map<String, dynamic>> bulkDeleteScenarios(List<int> ids) async {
+    if (ids.isEmpty) {
+      return {'deleted_count': 0, 'deleted_ids': <int>[]};
+    }
+    final res = await apiClient.dio.post(
+      '/scenarios/bulk-delete',
+      data: {'ids': ids.take(100).toList()},
+    );
+    return Map<String, dynamic>.from(res.data as Map);
   }
 
   /// GET /routines/custom

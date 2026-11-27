@@ -113,14 +113,16 @@ SYSTEM_INSTRUCTION = (
 )
 
 PREFERRED_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview",
     "gemini-flash-lite-latest",
-    "gemini-flash-latest",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
 ]
+
+# Son başarılı modeli hafızada tutarak her istekte zaman aşımı (timeout) beklemeyi önle
+_LAST_WORKING_GEMINI_MODEL: Optional[str] = "gemini-flash-lite-latest"
 
 
 # ==========================================
@@ -496,6 +498,37 @@ class ScenarioOut(BaseModel):
     id: int
     scenario_text: str
     created_at: datetime
+
+
+class ScenarioBulkDeleteRequest(BaseModel):
+    ids: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Tek seferde silinecek senaryo ID listesi (en fazla 100 öğe)",
+    )
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, v: List[int]) -> List[int]:
+        if not v:
+            raise ValueError("Silinecek en az 1 senaryo ID'si belirtilmelidir.")
+        if len(v) > 100:
+            raise ValueError("Tek seferde en fazla 100 senaryo silinebilir.")
+        cleaned: List[int] = []
+        seen = set()
+        for item in v:
+            if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+                raise ValueError("Tüm senaryo ID değerleri pozitif tam sayı olmalıdır.")
+            if item not in seen:
+                seen.add(item)
+                cleaned.append(item)
+        return cleaned
+
+
+class ScenarioBulkDeleteResponse(BaseModel):
+    deleted_count: int
+    deleted_ids: List[int]
 
 
 class RecommendationRequest(BaseModel):
@@ -945,52 +978,20 @@ async def generate_ai_recommendation(
         "x-goog-api-key": api_key,
     }
 
+    global _LAST_WORKING_GEMINI_MODEL
     errors_log: List[str] = []
     transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
 
-    async with httpx.AsyncClient(transport=transport, timeout=15.0) as client:
-        available_models: List[str] = []
-        try:
-            list_res = await client.get(
-                "https://generativelanguage.googleapis.com/v1beta/models",
-                headers=headers,
-            )
-            if list_res.status_code == 200:
-                for m in list_res.json().get("models", []):
-                    methods = m.get("supportedGenerationMethods", [])
-                    if "generateContent" in methods:
-                        name = m.get("name", "").replace("models/", "")
-                        if (
-                            name
-                            and "tts" not in name
-                            and "image" not in name
-                            and "embedding" not in name
-                        ):
-                            available_models.append(name)
-        except Exception as list_exc:
-            print(f"[Gemini API] Model listesi alınamadı: {repr(list_exc)}")
-
+    # Tek bir modelin yanıt vermesi için 8 saniyelik hızlı timeout:
+    # Yanıt vermeyen modelde 15sn takılıp mobil uygulamayı timeout'a düşürmesini engeller.
+    async with httpx.AsyncClient(transport=transport, timeout=8.0) as client:
         models_to_try: List[str] = []
+        if _LAST_WORKING_GEMINI_MODEL:
+            models_to_try.append(_LAST_WORKING_GEMINI_MODEL)
+
         for pref in PREFERRED_MODELS:
-            if not available_models or pref in available_models:
-                if pref not in models_to_try:
-                    models_to_try.append(pref)
-            else:
-                for avail in available_models:
-                    if avail.startswith(pref) and avail not in models_to_try:
-                        models_to_try.append(avail)
-
-        for avail in available_models:
-            if "flash" in avail and avail not in models_to_try:
-                models_to_try.append(avail)
-
-        if not models_to_try:
-            models_to_try = [
-                "gemini-3.8-flash",
-                "gemini-3.1-flash-lite",
-                "gemini-flash-lite-latest",
-                "gemini-2.5-flash",
-            ]
+            if pref not in models_to_try:
+                models_to_try.append(pref)
 
         for model_name in models_to_try[:5]:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
@@ -1000,6 +1001,7 @@ async def generate_ai_recommendation(
                 if res.status_code == 200:
                     text = _extract_gemini_text(res.json())
                     if text:
+                        _LAST_WORKING_GEMINI_MODEL = model_name
                         print(f"[Gemini API] BAŞARILI -> Model: {model_name}")
                         return text
                     errors_log.append(f"{model_name}: Boş yanıt döndü")
@@ -1903,25 +1905,48 @@ async def get_ip_location():
 
 @app.get("/scenarios", response_model=List[ScenarioOut])
 def list_scenarios(
+    request: Request,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
-    """Kullanıcının kaydettiği geçmiş senaryoları yeniden eskiye listeler."""
+    """Kullanıcının kaydettiği geçmiş senaryoları yeniden eskiye listeler (opsiyonel limit/offset destekli)."""
+    rate_limiter.check(request, bucket="scenarios_read", max_requests=60, window_seconds=60)
+    if offset < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="offset değeri negatif olamaz.",
+        )
+    if limit is not None and (limit <= 0 or limit > 200):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="limit değeri 1 ile 200 arasında olmalıdır.",
+        )
+
     query = db.query(UserScenario)
     if current_user is not None:
         query = query.filter(UserScenario.user_id == current_user.id)
     else:
         query = query.filter(UserScenario.user_id.is_(None))
-    return query.order_by(UserScenario.id.desc()).all()
+
+    ordered = query.order_by(UserScenario.id.desc())
+    if offset > 0:
+        ordered = ordered.offset(offset)
+    if limit is not None:
+        ordered = ordered.limit(limit)
+    return ordered.all()
 
 
 @app.post("/scenarios", response_model=List[ScenarioOut], status_code=status.HTTP_201_CREATED)
 def create_scenario(
     payload: ScenarioCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     """Tekli veya çoklu kişisel termal deneyim senaryosu kaydeder."""
+    rate_limiter.check(request, bucket="scenarios_write", max_requests=30, window_seconds=60)
     items_to_add: List[str] = []
 
     if payload.scenario_text and payload.scenario_text.strip():
@@ -1953,16 +1978,59 @@ def create_scenario(
     return created_records
 
 
-@app.delete("/scenarios/{scenario_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scenario(
-    scenario_id: int,
+@app.post("/scenarios/bulk-delete", response_model=ScenarioBulkDeleteResponse)
+def bulk_delete_scenarios(
+    payload: ScenarioBulkDeleteRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
-    """Kayıtlı bir senaryoyu ID'sine göre siler."""
+    """
+    Seçilen senaryo ID listesini tek bir veritabanı transaction'ı içinde siler.
+    Kullanıcıya ait olmayan ID'ler sessizce atlanır ve bilgi sızdırılmaz.
+    """
+    rate_limiter.check(request, bucket="scenarios_write", max_requests=30, window_seconds=60)
+
+    query = db.query(UserScenario).filter(UserScenario.id.in_(payload.ids))
+    if current_user is not None:
+        query = query.filter(UserScenario.user_id == current_user.id)
+    else:
+        query = query.filter(UserScenario.user_id.is_(None))
+
+    owned_rows = query.all()
+    deleted_ids = [row.id for row in owned_rows]
+
+    if owned_rows:
+        for row in owned_rows:
+            db.delete(row)
+        db.commit()
+
+    return ScenarioBulkDeleteResponse(
+        deleted_count=len(deleted_ids),
+        deleted_ids=deleted_ids,
+    )
+
+
+@app.delete("/scenarios/{scenario_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scenario(
+    scenario_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """
+    Kayıtlı bir senaryoyu ID'sine göre siler.
+    Sahiplik kontrolü: current_user varsa yalnızca kendi kaydı,
+    yoksa yalnızca user_id IS NULL olan anonim kayıt silinebilir.
+    Başkasının kaydı için 404 döner (bilgi sızdırmaz).
+    """
+    rate_limiter.check(request, bucket="scenarios_write", max_requests=30, window_seconds=60)
     query = db.query(UserScenario).filter(UserScenario.id == scenario_id)
     if current_user is not None:
         query = query.filter(UserScenario.user_id == current_user.id)
+    else:
+        query = query.filter(UserScenario.user_id.is_(None))
+
     item = query.first()
     if not item:
         raise HTTPException(

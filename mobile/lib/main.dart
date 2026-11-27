@@ -6,11 +6,13 @@ import 'core/background/weather_alert_worker.dart';
 import 'core/network/api_client.dart';
 import 'core/notifications/local_notification_service.dart';
 import 'core/storage/secure_storage_service.dart';
+import 'core/theme/marble_background_painter.dart';
+import 'core/theme/optiwear_theme.dart';
 import 'core/widgets/global_location_autocomplete.dart';
+import 'core/widgets/weather_animated_background.dart';
 import 'features/auth/auth_service.dart';
 import 'features/routine/routine_service.dart';
-
-const Color kMatteWhite = Color(0xFFF1F5F9);
+import 'features/scenario/scenario_list_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +37,11 @@ class _OptiWearAppState extends State<OptiWearApp> {
   Map<String, dynamic>? _currentUser;
   bool _checkingSession = true;
 
+  // Sistem temasını takip eder (Carrara Açık / Oniks Koyu), ayrıca çekmeceden değiştirilebilir
+  ThemeMode _themeMode = ThemeMode.system;
+  WeatherCategory _activeWeatherCategory = WeatherCategory.sunny;
+  bool _lowPerformanceMode = false;
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +50,11 @@ class _OptiWearAppState extends State<OptiWearApp> {
     _authService = AuthService(apiClient: _apiClient, storage: _storage);
     _routineService = RoutineService(apiClient: _apiClient);
     _restoreSession();
+  }
+
+  bool get _isNightHours {
+    final hour = DateTime.now().hour;
+    return hour < 6 || hour >= 19;
   }
 
   Future<void> _restoreSession() async {
@@ -63,32 +75,63 @@ class _OptiWearAppState extends State<OptiWearApp> {
     }
   }
 
+  void _handleWeatherStatusChanged(String? status) {
+    final next = WeatherCategory.fromStatus(status);
+    if (next != _activeWeatherCategory && mounted) {
+      setState(() => _activeWeatherCategory = next);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isNight = _isNightHours;
+    final lightMarble = OptiWearTheme.carrara(
+      category: _activeWeatherCategory,
+      isNight: isNight,
+    ).toThemeData();
+    final darkMarble = OptiWearTheme.onyx(
+      category: _activeWeatherCategory,
+      isNight: isNight,
+    ).toThemeData();
+
     return MaterialApp(
       title: 'OptiWear',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true).copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF38BDF8),
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF020617),
-      ),
+      themeMode: _themeMode,
+      theme: lightMarble,
+      darkTheme: darkMarble,
+      themeAnimationDuration: const Duration(milliseconds: 550),
+      themeAnimationCurve: Curves.easeInOutCubic,
       home: _checkingSession
-          ? const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
+          ? Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(
+                  color: OptiWearTheme.onyx(
+                    category: _activeWeatherCategory,
+                    isNight: isNight,
+                  ).effectiveAccent,
+                ),
+              ),
             )
           : _currentUser == null
               ? AuthScreen(
                   authService: _authService,
-                  onAuthenticated: (user) => setState(() => _currentUser = user),
+                  onAuthenticated: (user) =>
+                      setState(() => _currentUser = user),
                 )
               : RoutineDashboardScreen(
                   user: _currentUser!,
                   authService: _authService,
                   routineService: _routineService,
-                  onUserUpdated: (updated) => setState(() => _currentUser = updated),
+                  themeMode: _themeMode,
+                  lowPerformanceMode: _lowPerformanceMode,
+                  onThemeModeChanged: (mode) =>
+                      setState(() => _themeMode = mode),
+                  onLowPerformanceChanged: (val) =>
+                      setState(() => _lowPerformanceMode = val),
+                  onWeatherStatusChanged: _handleWeatherStatusChanged,
+                  onUserUpdated: (updated) =>
+                      setState(() => _currentUser = updated),
                   onLogout: () => setState(() => _currentUser = null),
                 ),
     );
@@ -96,26 +139,34 @@ class _OptiWearAppState extends State<OptiWearApp> {
 }
 
 Widget buildUserAvatarWidget({
+  required BuildContext context,
   required String? avatarBase64,
   double radius = 18,
 }) {
+  final ow = OptiWearTheme.of(context);
   if (avatarBase64 != null && avatarBase64.trim().isNotEmpty) {
     try {
       final bytes = base64Decode(avatarBase64.trim());
       return CircleAvatar(
         radius: radius,
-        backgroundColor: Colors.white,
+        backgroundColor: ow.cardSurface,
         backgroundImage: MemoryImage(bytes),
       );
     } catch (_) {}
   }
-  return CircleAvatar(
-    radius: radius,
-    backgroundColor: Colors.white,
-    child: Icon(
-      Icons.person,
-      color: const Color(0xFF0F172A),
-      size: radius * 1.25,
+  return Container(
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: ow.cardBorder, width: 1.0),
+    ),
+    child: CircleAvatar(
+      radius: radius,
+      backgroundColor: ow.cardSurface,
+      child: Icon(
+        Icons.person,
+        color: ow.textPrimary,
+        size: radius * 1.22,
+      ),
     ),
   );
 }
@@ -160,6 +211,16 @@ class _AuthScreenState extends State<AuthScreen> {
   static final RegExp _lowerRegex = RegExp(r'[a-zçğıöşü]');
   static final RegExp _digitRegex = RegExp(r'\d');
 
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _otpCtrl.dispose();
+    super.dispose();
+  }
+
   bool _validateFields() {
     String? nameErr;
     String? phoneErr;
@@ -177,7 +238,8 @@ class _AuthScreenState extends State<AuthScreen> {
         nameErr = 'Lütfen adınızı ve soyadınızı girin (en az 2 karakter).';
       }
       if (!_phoneRegex.hasMatch(phone)) {
-        phoneErr = 'Telefon 10-15 rakam olmalıdır (Örn: +905551234567 veya 05551234567).';
+        phoneErr =
+            'Telefon 10-15 rakam olmalıdır (Örn: +905551234567 veya 05551234567).';
       }
     }
 
@@ -196,7 +258,8 @@ class _AuthScreenState extends State<AuthScreen> {
       if (!_lowerRegex.hasMatch(pass)) missing.add('1 küçük harf');
       if (!_digitRegex.hasMatch(pass)) missing.add('1 rakam');
       if (missing.isNotEmpty) {
-        passErr = 'Şifre gereksinimi eksik: ${missing.join(", ")} içermelidir.';
+        passErr =
+            'Şifre gereksinimi eksik: ${missing.join(", ")} içermelidir.';
       }
     }
 
@@ -207,7 +270,10 @@ class _AuthScreenState extends State<AuthScreen> {
       _passwordError = passErr;
     });
 
-    return nameErr == null && phoneErr == null && emailErr == null && passErr == null;
+    return nameErr == null &&
+        phoneErr == null &&
+        emailErr == null &&
+        passErr == null;
   }
 
   String _extractError(Object err) {
@@ -282,7 +348,10 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _verifyOtpCode() async {
     final code = _otpCtrl.text.trim();
     if (code.length != 6) {
-      setState(() => _errorMessage = 'Lütfen 6 haneli doğrulama kodunu eksiksiz girin.');
+      setState(
+        () => _errorMessage =
+            'Lütfen 6 haneli doğrulama kodunu eksiksiz girin.',
+      );
       return;
     }
 
@@ -305,15 +374,15 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Widget _buildInlineError(String? errorText) {
+  Widget _buildInlineError(String? errorText, OptiWearTheme ow) {
     if (errorText == null || errorText.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 5, left: 4, right: 4),
       child: Text(
         errorText,
         softWrap: true,
-        style: const TextStyle(
-          color: Colors.redAccent,
+        style: TextStyle(
+          color: ow.danger,
           fontSize: 11.5,
           height: 1.35,
         ),
@@ -323,20 +392,19 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ow = OptiWearTheme.of(context);
+
     return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Card(
-              color: const Color(0xFF0F172A),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: Colors.white.withOpacity(0.12)),
-              ),
-              child: Padding(
+      body: WeatherAnimatedBackground(
+        isNight: ow.isNight,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: MarbleCard(
                 padding: const EdgeInsets.all(24),
+                borderRadius: 20,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -345,8 +413,9 @@ class _AuthScreenState extends State<AuthScreen> {
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: ow.elevatedSurface,
                             borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: ow.cardBorder),
                           ),
                           child: Image.asset(
                             'assets/images/logo.png',
@@ -358,11 +427,12 @@ class _AuthScreenState extends State<AuthScreen> {
                         const SizedBox(width: 10),
                         Text(
                           'OptiWear',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: kMatteWhite,
-                                letterSpacing: 0.4,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: ow.textPrimary,
+                                    letterSpacing: 0.4,
+                                  ),
                         ),
                       ],
                     ),
@@ -374,7 +444,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               ? 'Güvenli hesabınıza giriş yapın'
                               : 'Yeni OptiWear hesabı oluşturun'),
                       softWrap: true,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13.5),
+                      style: TextStyle(color: ow.textSecondary, fontSize: 13.5),
                     ),
                     const SizedBox(height: 20),
                     if (_infoMessage != null)
@@ -382,14 +452,17 @@ class _AuthScreenState extends State<AuthScreen> {
                         padding: const EdgeInsets.all(12),
                         margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF38BDF8).withOpacity(0.15),
+                          color: ow.effectiveAccent.withOpacity(0.14),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFF38BDF8)),
+                          border: Border.all(color: ow.effectiveAccent),
                         ),
                         child: Text(
                           _infoMessage!,
                           softWrap: true,
-                          style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12.5),
+                          style: TextStyle(
+                            color: ow.textPrimary,
+                            fontSize: 12.5,
+                          ),
                         ),
                       ),
                     if (_errorMessage != null)
@@ -397,14 +470,14 @@ class _AuthScreenState extends State<AuthScreen> {
                         padding: const EdgeInsets.all(12),
                         margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.15),
+                          color: ow.danger.withOpacity(0.14),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.redAccent),
+                          border: Border.all(color: ow.danger),
                         ),
                         child: Text(
                           _errorMessage!,
                           softWrap: true,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
+                          style: TextStyle(color: ow.danger, fontSize: 12.5),
                         ),
                       ),
                     if (_awaitingOtp) ...[
@@ -413,10 +486,11 @@ class _AuthScreenState extends State<AuthScreen> {
                         keyboardType: TextInputType.number,
                         maxLength: 6,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 22,
                           letterSpacing: 8,
                           fontWeight: FontWeight.bold,
+                          color: ow.textPrimary,
                         ),
                         decoration: const InputDecoration(
                           labelText: '6 Haneli Doğrulama Kodu',
@@ -427,9 +501,11 @@ class _AuthScreenState extends State<AuthScreen> {
                       FilledButton(
                         onPressed: _loading ? null : _verifyOtpCode,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          padding: const EdgeInsets.symmetric(vertical: 4),
                           child: Text(
-                            _loading ? 'Doğrulanıyor...' : 'Kodu Doğrula ve Giriş Yap',
+                            _loading
+                                ? 'Doğrulanıyor...'
+                                : 'Kodu Doğrula ve Giriş Yap',
                           ),
                         ),
                       ),
@@ -446,20 +522,24 @@ class _AuthScreenState extends State<AuthScreen> {
                         TextField(
                           controller: _nameCtrl,
                           onChanged: (_) {
-                            if (_nameError != null) setState(() => _nameError = null);
+                            if (_nameError != null) {
+                              setState(() => _nameError = null);
+                            }
                           },
                           decoration: const InputDecoration(
                             labelText: 'Ad Soyad',
                             prefixIcon: Icon(Icons.person_outline),
                           ),
                         ),
-                        _buildInlineError(_nameError),
+                        _buildInlineError(_nameError, ow),
                         const SizedBox(height: 12),
                         TextField(
                           controller: _phoneCtrl,
                           keyboardType: TextInputType.phone,
                           onChanged: (_) {
-                            if (_phoneError != null) setState(() => _phoneError = null);
+                            if (_phoneError != null) {
+                              setState(() => _phoneError = null);
+                            }
                           },
                           decoration: const InputDecoration(
                             labelText: 'Telefon Numarası',
@@ -467,14 +547,16 @@ class _AuthScreenState extends State<AuthScreen> {
                             prefixIcon: Icon(Icons.phone_outlined),
                           ),
                         ),
-                        _buildInlineError(_phoneError),
+                        _buildInlineError(_phoneError, ow),
                         const SizedBox(height: 12),
                       ],
                       TextField(
                         controller: _emailCtrl,
                         keyboardType: TextInputType.emailAddress,
                         onChanged: (_) {
-                          if (_emailError != null) setState(() => _emailError = null);
+                          if (_emailError != null) {
+                            setState(() => _emailError = null);
+                          }
                         },
                         decoration: const InputDecoration(
                           labelText: 'E-posta Adresi',
@@ -482,13 +564,15 @@ class _AuthScreenState extends State<AuthScreen> {
                           prefixIcon: Icon(Icons.email_outlined),
                         ),
                       ),
-                      _buildInlineError(_emailError),
+                      _buildInlineError(_emailError, ow),
                       const SizedBox(height: 12),
                       TextField(
                         controller: _passwordCtrl,
                         obscureText: true,
                         onChanged: (_) {
-                          if (_passwordError != null) setState(() => _passwordError = null);
+                          if (_passwordError != null) {
+                            setState(() => _passwordError = null);
+                          }
                         },
                         decoration: const InputDecoration(
                           labelText: 'Şifre',
@@ -496,27 +580,27 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                       ),
                       if (!_isLogin)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6, left: 4, right: 4),
+                        Padding(
+                          padding:
+                              const EdgeInsets.only(top: 6, left: 4, right: 4),
                           child: Text(
                             'Şifreniz en az 8 karakter uzunluğunda olmalı; en az 1 büyük harf, 1 küçük harf ve 1 rakam içermelidir.',
                             softWrap: true,
                             style: TextStyle(
-                              color: Colors.white60,
+                              color: ow.textSecondary,
                               fontSize: 11.5,
                               height: 1.35,
                             ),
                           ),
                         ),
-                      _buildInlineError(_passwordError),
+                      _buildInlineError(_passwordError, ow),
                       const SizedBox(height: 24),
                       FilledButton(
                         onPressed: _loading ? null : _submit,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Text(_loading
+                        child: Text(
+                          _loading
                               ? 'İşleniyor...'
-                              : (_isLogin ? 'Giriş Yap' : 'Kayıt Ol')),
+                              : (_isLogin ? 'Giriş Yap' : 'Kayıt Ol'),
                         ),
                       ),
                       TextButton(
@@ -529,9 +613,11 @@ class _AuthScreenState extends State<AuthScreen> {
                           _emailError = null;
                           _passwordError = null;
                         }),
-                        child: Text(_isLogin
-                            ? 'Hesabınız yok mu? Kayıt Olun'
-                            : 'Zaten hesabınız var mı? Giriş Yapın'),
+                        child: Text(
+                          _isLogin
+                              ? 'Hesabınız yok mu? Kayıt Olun'
+                              : 'Zaten hesabınız var mı? Giriş Yapın',
+                        ),
                       ),
                     ],
                   ],
@@ -549,6 +635,11 @@ class RoutineDashboardScreen extends StatefulWidget {
   final Map<String, dynamic> user;
   final AuthService authService;
   final RoutineService routineService;
+  final ThemeMode themeMode;
+  final bool lowPerformanceMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ValueChanged<bool> onLowPerformanceChanged;
+  final ValueChanged<String?> onWeatherStatusChanged;
   final ValueChanged<Map<String, dynamic>> onUserUpdated;
   final VoidCallback onLogout;
 
@@ -557,6 +648,11 @@ class RoutineDashboardScreen extends StatefulWidget {
     required this.user,
     required this.authService,
     required this.routineService,
+    required this.themeMode,
+    required this.lowPerformanceMode,
+    required this.onThemeModeChanged,
+    required this.onLowPerformanceChanged,
+    required this.onWeatherStatusChanged,
     required this.onUserUpdated,
     required this.onLogout,
   });
@@ -569,7 +665,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedTabIndex = 0;
 
-  // Sekme 1: Kombin & Rutinlerim (Varsayılan konum Profilim'den otomatik gelir, tek seferlik değiştirilebilir)
+  // Arka plan animasyonunu kilitleyen son hava durumu (`hava_durumu_durumu`)
+  String? _lockedWeatherStatus;
+
+  // Sekme 1: Kombin & Rutinlerim
   late GlobalLocationSelection _homeLocation;
   final _heightCtrl = TextEditingController(text: '175');
   final _weightCtrl = TextEditingController(text: '75');
@@ -578,9 +677,35 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   final _customTitleCtrl = TextEditingController(text: 'Sabah Uyanma');
   final _customTimeCtrl = TextEditingController(text: '07:30');
   int _selectedLeadMinutes = 15;
-  static const List<int> _leadMinuteOptions = [5, 10, 15, 20, 30, 45, 60, 90, 120];
-  static const List<String> _dayShortLabels = ['P', 'S', 'Ç', 'P', 'C', 'C', 'P'];
-  static const List<String> _dayFullCodes = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+  static const List<int> _leadMinuteOptions = [
+    5,
+    10,
+    15,
+    20,
+    30,
+    45,
+    60,
+    90,
+    120,
+  ];
+  static const List<String> _dayShortLabels = [
+    'P',
+    'S',
+    'Ç',
+    'P',
+    'C',
+    'C',
+    'P',
+  ];
+  static const List<String> _dayFullCodes = [
+    'Pzt',
+    'Sal',
+    'Çar',
+    'Per',
+    'Cum',
+    'Cmt',
+    'Paz',
+  ];
   final List<bool> _selectedDays = [true, true, true, true, true, false, false];
   List<Map<String, dynamic>> _customRoutines = [];
 
@@ -594,7 +719,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     '15°C\'de fermuarlı sweatshirt çok idealdi',
   ];
 
-  // Sekme 2: Seyahat Valizi Modu (Uluslararası Konum Arama)
+  // Sekme 2: Seyahat Valizi Modu
   GlobalLocationSelection _travelLocation = const GlobalLocationSelection(
     name: 'Antalya',
     admin1: 'Antalya',
@@ -608,7 +733,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   Map<String, dynamic>? _travelResult;
   bool _travelLoading = false;
 
-  // Sekme 3: Hızlı Hava Durumu Arama (Uluslararası Konum Arama)
+  // Sekme 3: Hızlı Hava Durumu Arama
   GlobalLocationSelection _quickLocation = const GlobalLocationSelection(
     name: 'Ankara',
     admin1: 'Ankara',
@@ -631,13 +756,35 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     _loadAllRoutines();
   }
 
+  @override
+  void dispose() {
+    _heightCtrl.dispose();
+    _weightCtrl.dispose();
+    _customTitleCtrl.dispose();
+    _customTimeCtrl.dispose();
+    _scenarioInputCtrl.dispose();
+    _travelStartCtrl.dispose();
+    _travelEndCtrl.dispose();
+    super.dispose();
+  }
+
+  void _lockWeatherThemeFromStatus(String? status) {
+    if (status == null || status.trim().isEmpty) return;
+    setState(() => _lockedWeatherStatus = status.trim());
+    widget.onWeatherStatusChanged(status.trim());
+  }
+
   void _syncDefaultLocationFromUser(Map<String, dynamic> userMap) {
     final name = (userMap['default_location_name'] ?? 'İstanbul').toString();
     final admin1 = (userMap['default_admin1'] ?? '').toString();
     final country = (userMap['default_country'] ?? 'Türkiye').toString();
     final lat = (userMap['default_lat'] as num?)?.toDouble() ?? 41.0082;
     final lon = (userMap['default_lon'] as num?)?.toDouble() ?? 28.9784;
-    final parts = [name, if (admin1.isNotEmpty && admin1 != name) admin1, if (country.isNotEmpty) country];
+    final parts = [
+      name,
+      if (admin1.isNotEmpty && admin1 != name) admin1,
+      if (country.isNotEmpty) country,
+    ];
 
     _homeLocation = GlobalLocationSelection(
       name: name,
@@ -696,21 +843,20 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     } catch (_) {}
   }
 
-  List<Color> _weatherGradient(String? status) {
-    switch (status) {
-      case 'Güneşli':
-        return [const Color(0xFF0284C7), const Color(0xFFD97706)];
-      case 'Yağmurlu':
-        return [const Color(0xFF1E3A8A), const Color(0xFF0F172A)];
-      case 'Karlı':
-        return [const Color(0xFF38BDF8), const Color(0xFF1E293B)];
-      case 'Rüzgarlı':
-        return [const Color(0xFF0F766E), const Color(0xFF0F172A)];
-      case 'Dolu':
-        return [const Color(0xFF4C1D95), const Color(0xFF0F172A)];
-      case 'Soğuk/Ayaz':
-      default:
-        return [const Color(0xFF1E40AF), const Color(0xFF020617)];
+  Future<void> _openScenarioListScreen() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScenarioListScreen(
+          routineService: widget.routineService,
+        ),
+      ),
+    );
+    // Geri dönüldüğünde senaryo sayısını ve listesini senkronize et
+    if (mounted) {
+      try {
+        final updated = await widget.routineService.getScenarios();
+        if (mounted) setState(() => _scenarios = updated);
+      } catch (_) {}
     }
   }
 
@@ -723,7 +869,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
         lat: _quickLocation.latitude,
         lon: _quickLocation.longitude,
       );
-      if (mounted) setState(() => _quickWeatherResult = res);
+      if (mounted) {
+        setState(() => _quickWeatherResult = res);
+        _lockWeatherThemeFromStatus(res['hava_durumu_durumu']?.toString());
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -766,11 +915,21 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
         kilo: double.tryParse(_weightCtrl.text) ?? 75.0,
         terlemeEgilimi: _sweating,
       );
-      if (mounted) setState(() => _travelResult = res);
+      if (mounted) {
+        setState(() => _travelResult = res);
+        final forecasts = (res['gunluk_tahminler'] as List?) ?? [];
+        if (forecasts.isNotEmpty && forecasts.first is Map) {
+          final firstStatus =
+              (forecasts.first as Map)['hava_durumu_durumu']?.toString();
+          _lockWeatherThemeFromStatus(firstStatus);
+        }
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Seyahat valizi önerisi alınırken hata oluştu.')),
+          const SnackBar(
+            content: Text('Seyahat valizi önerisi alınırken hata oluştu.'),
+          ),
         );
       }
     } finally {
@@ -784,7 +943,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       hour: int.tryParse(parts[0]) ?? 7,
       minute: int.tryParse(parts.length > 1 ? parts[1] : '30') ?? 30,
     );
-    final picked = await showTimePicker(context: context, initialTime: initial);
+    final picked =
+        await showTimePicker(context: context, initialTime: initial);
     if (picked != null) {
       final hh = picked.hour.toString().padLeft(2, '0');
       final mm = picked.minute.toString().padLeft(2, '0');
@@ -815,14 +975,16 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
 
   String _getCurrentSystemCommentSummary([String? fallbackFromRoutine]) {
     if (_morningBriefResult != null && _morningBriefResult!['oneri'] != null) {
-      final s = _shortenTo34Sentences(_morningBriefResult!['oneri'].toString());
+      final s =
+          _shortenTo34Sentences(_morningBriefResult!['oneri'].toString());
       if (s.isNotEmpty) return s;
     }
     if (fallbackFromRoutine != null && fallbackFromRoutine.trim().isNotEmpty) {
       return _shortenTo34Sentences(fallbackFromRoutine);
     }
     if (_customRoutines.isNotEmpty) {
-      final lastMsg = _customRoutines.first['notification_message']?.toString() ?? '';
+      final lastMsg =
+          _customRoutines.first['notification_message']?.toString() ?? '';
       if (lastMsg.trim().isNotEmpty) return _shortenTo34Sentences(lastMsg);
     }
     return '${_homeLocation.displayName} konumundaki anlık hissedilen sıcaklığa ve vücut kitle indeksine '
@@ -851,7 +1013,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
 
       final routineId = created['id'] as int;
       final notifyTime = created['notify_time']?.toString() ?? '';
-      final leadMins = (created['lead_minutes'] as int?) ?? _selectedLeadMinutes;
+      final leadMins =
+          (created['lead_minutes'] as int?) ?? _selectedLeadMinutes;
       final commentSummary = _getCurrentSystemCommentSummary(
         created['notification_message']?.toString(),
       );
@@ -881,7 +1044,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     }
   }
 
-  Future<void> _toggleRoutineItem(Map<String, dynamic> item, bool enabled) async {
+  Future<void> _toggleRoutineItem(
+    Map<String, dynamic> item,
+    bool enabled,
+  ) async {
     final id = item['id'] as int;
     final title = (item['routine_title'] ?? 'Rutin').toString();
     final timeStr = (item['routine_time'] ?? '08:00').toString();
@@ -957,8 +1123,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
       if (mounted) {
         setState(() {
           _morningBriefResult = res;
-          _statusMessage = '✓ Seçilen konum ve fiziksel profiliniz için kombin önerisi hazırlandı.';
+          _statusMessage =
+              '✓ Seçilen konum ve fiziksel profiliniz için kombin önerisi hazırlandı.';
         });
+        _lockWeatherThemeFromStatus(res['hava_durumu_durumu']?.toString());
       }
     } catch (_) {
       setState(() => _statusMessage = 'Kombin önerisi alınırken hata oluştu.');
@@ -969,18 +1137,22 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
 
   Future<void> _testInstantNotificationSound() async {
     final summary = _getCurrentSystemCommentSummary();
-    await LocalNotificationService.instance.triggerInstantRoutineTestNotification(
+    await LocalNotificationService.instance
+        .triggerInstantRoutineTestNotification(
       systemCommentSummary: summary,
     );
     if (mounted) {
-      setState(() => _statusMessage =
-          '🔔 Kişisel sistem kombin yorumunun 3-4 cümlelik özetiyle bildirim anında gönderildi!');
+      setState(
+        () => _statusMessage =
+            '🔔 Kişisel sistem kombin yorumunun 3-4 cümlelik özetiyle bildirim anında gönderildi!',
+      );
     }
   }
 
   Future<void> _openProfileScreen() async {
     Navigator.of(context).pop(); // endDrawer'ı kapat
-    final updatedUser = await Navigator.of(context).push<Map<String, dynamic>>(
+    final updatedUser =
+        await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
         builder: (_) => ProfileScreen(
           user: widget.user,
@@ -1012,157 +1184,282 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     );
   }
 
-  Widget _buildQuickWeatherTab() {
-    final status = _quickWeatherResult?['hava_durumu_durumu']?.toString();
-    final colors = _weatherGradient(status);
+  Widget _buildQuickWeatherTab(OptiWearTheme ow) {
+    final tempVal =
+        (_quickWeatherResult?['sicaklik'] as num?)?.toDouble() ?? 15.0;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 500),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: colors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Card(
-            color: const Color(0xFF0F172A).withOpacity(0.88),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '🔍 Uluslararası Hızlı Hava Durumu',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Dünyadaki herhangi bir ülke, şehir veya ilçeyi aratarak anlık sıcaklığı, rüzgarı ve hava olayını görüntüleyin.',
-                    style: TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 14),
-                  GlobalLocationAutocomplete(
-                    routineService: widget.routineService,
-                    initialLocation: _quickLocation,
-                    labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
-                    onLocationSelected: (loc) => setState(() => _quickLocation = loc),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _quickLoading ? null : _searchQuickWeather,
-                      icon: const Icon(Icons.search),
-                      label: Text(_quickLoading ? 'Sorgulanıyor...' : 'Anlık Hava Durumunu Göster'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_quickWeatherResult != null) ...[
-            const SizedBox(height: 18),
-            Card(
-              color: Colors.black.withOpacity(0.45),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: Colors.white.withOpacity(0.2)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(22),
-                child: Column(
-                  children: [
-                    Text(
-                      _quickWeatherResult!['sehir'].toString(),
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: kMatteWhite,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Chip(
-                      label: Text(
-                        '${_quickWeatherResult!['hava_durumu_durumu']} (WMO: ${_quickWeatherResult!['wmo_kodu']})',
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      '${_quickWeatherResult!['sicaklik']}°C',
-                      style: const TextStyle(fontSize: 44, fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Hissedilen: ${_quickWeatherResult!['hissedilen_sicaklik']}°C  •  Rüzgar: ${_quickWeatherResult!['ruzgar_hizi']} km/s',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                  ],
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        MarbleCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '🔍 Uluslararası Hızlı Hava Durumu',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: ow.textPrimary,
                 ),
               ),
+              const SizedBox(height: 6),
+              Text(
+                'Dünyadaki herhangi bir ülke, şehir veya ilçeyi aratarak anlık sıcaklığı, rüzgarı ve hava olayını görüntüleyin.',
+                style: TextStyle(fontSize: 12, color: ow.textSecondary),
+              ),
+              const SizedBox(height: 14),
+              GlobalLocationAutocomplete(
+                routineService: widget.routineService,
+                initialLocation: _quickLocation,
+                labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
+                onLocationSelected: (loc) =>
+                    setState(() => _quickLocation = loc),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _quickLoading ? null : _searchQuickWeather,
+                  icon: const Icon(Icons.search),
+                  label: Text(
+                    _quickLoading
+                        ? 'Sorgulanıyor...'
+                        : 'Anlık Hava Durumunu Göster',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_quickWeatherResult != null) ...[
+          const SizedBox(height: 18),
+          MarbleCard(
+            padding: const EdgeInsets.all(22),
+            borderRadius: 20,
+            child: Column(
+              children: [
+                Text(
+                  _quickWeatherResult!['sehir'].toString(),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: ow.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Chip(
+                  avatar: Icon(
+                    Icons.wb_twilight_rounded,
+                    size: 16,
+                    color: ow.effectiveAccent,
+                  ),
+                  label: Text(
+                    '${_quickWeatherResult!['hava_durumu_durumu']} (WMO: ${_quickWeatherResult!['wmo_kodu']})',
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  '${_quickWeatherResult!['sicaklik']}°C',
+                  style: TextStyle(
+                    fontSize: 44,
+                    fontWeight: FontWeight.w800,
+                    color: ow.temperatureColor(tempVal),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Hissedilen: ${_quickWeatherResult!['hissedilen_sicaklik']}°C  •  Rüzgar: ${_quickWeatherResult!['ruzgar_hizi']} km/s',
+                  style: TextStyle(color: ow.textSecondary),
+                ),
+              ],
             ),
-          ],
+          ),
         ],
-      ),
+      ],
     );
   }
 
-  Widget _buildTravelPackingTab() {
+  Widget _buildTravelPackingTab(OptiWearTheme ow) {
     final forecasts = (_travelResult?['gunluk_tahminler'] as List?) ?? [];
 
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Card(
-          color: const Color(0xFF0F172A),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
+        MarbleCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '🧳 Seyahat Valizi & Bavul Hazırlama Modu',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: ow.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Gideceğiniz uluslararası veya yerel şehri ve tarih aralığını seçin; fiziksel profilinize uygun bavul listenizi hazırlayalım.',
+                style: TextStyle(fontSize: 12, color: ow.textSecondary),
+              ),
+              const SizedBox(height: 14),
+              GlobalLocationAutocomplete(
+                routineService: widget.routineService,
+                initialLocation: _travelLocation,
+                labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
+                onLocationSelected: (loc) =>
+                    setState(() => _travelLocation = loc),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _travelStartCtrl,
+                      readOnly: true,
+                      onTap: _pickTravelDateRange,
+                      decoration: const InputDecoration(
+                        labelText: 'Başlangıç Tarihi',
+                        prefixIcon: Icon(Icons.date_range),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _travelEndCtrl,
+                      readOnly: true,
+                      onTap: _pickTravelDateRange,
+                      decoration: const InputDecoration(
+                        labelText: 'Bitiş Tarihi',
+                        prefixIcon: Icon(Icons.event),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed:
+                      _travelLoading ? null : _generateTravelPackingList,
+                  icon: const Icon(Icons.luggage),
+                  label: Text(
+                    _travelLoading
+                        ? 'Valiz Listesi Hazırlanıyor...'
+                        : 'Seyahat Valizi ve Kombin Listesi Oluştur',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_travelResult != null) ...[
+          const SizedBox(height: 16),
+          MarbleCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '🧳 Seyahat Valizi & Bavul Hazırlama Modu',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
+                Text(
+                  '📍 ${_travelResult!['hedef_sehir']} (${_travelResult!['gun_sayisi']} Günlük Valiz Önerisi)',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: ow.textPrimary,
+                  ),
                 ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Gideceğiniz uluslararası veya yerel şehri ve tarih aralığını seçin; fiziksel profilinize uygun bavul listenizi hazırlayalım.',
-                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                const SizedBox(height: 10),
+                Text(
+                  _travelResult!['valiz_onerisi'].toString(),
+                  style: TextStyle(height: 1.45, color: ow.textPrimary),
+                ),
+                const SizedBox(height: 14),
+                const Divider(),
+                ...forecasts.map((d) {
+                  final day = Map<String, dynamic>.from(d as Map);
+                  final maxT =
+                      (day['max_sicaklik'] as num?)?.toDouble() ?? 15.0;
+                  return ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      '${day['tarih']} • ${day['hava_durumu_durumu']}',
+                      style: TextStyle(color: ow.textPrimary),
+                    ),
+                    trailing: Text(
+                      '${day['min_sicaklik']}°C / ${day['max_sicaklik']}°C  (${day['ruzgar_hizi']} km/s)',
+                      style: TextStyle(
+                        color: ow.temperatureColor(maxT),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRoutinesAndOutfitTab(OptiWearTheme ow) {
+    final previewScenarios = _scenarios.take(3).toList();
+    final feelsLikeVal =
+        (_morningBriefResult?['hissedilen_sicaklik'] as num?)?.toDouble() ??
+            15.0;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 1. FİZİKSEL PROFİL & KOMBİN ÖNERİSİ (ANA EKRAN İLK KART)
+          MarbleCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '👕 Fiziksel Profil & Kombin Önerisi',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: ow.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Varsayılan konumunuz Profilim ekranından otomatik gelir; dilerseniz aşağıdan tek seferlik başka bir konum seçip anlık öneri alabilirsiniz.',
+                  style: TextStyle(fontSize: 12, color: ow.textSecondary),
                 ),
                 const SizedBox(height: 14),
                 GlobalLocationAutocomplete(
                   routineService: widget.routineService,
-                  initialLocation: _travelLocation,
+                  initialLocation: _homeLocation,
                   labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
-                  onLocationSelected: (loc) => setState(() => _travelLocation = loc),
+                  onLocationSelected: (loc) =>
+                      setState(() => _homeLocation = loc),
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       child: TextField(
-                        controller: _travelStartCtrl,
-                        readOnly: true,
-                        onTap: _pickTravelDateRange,
-                        decoration: const InputDecoration(
-                          labelText: 'Başlangıç Tarihi',
-                          prefixIcon: Icon(Icons.date_range),
-                        ),
+                        controller: _heightCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration:
+                            const InputDecoration(labelText: 'Boy (cm)'),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: TextField(
-                        controller: _travelEndCtrl,
-                        readOnly: true,
-                        onTap: _pickTravelDateRange,
-                        decoration: const InputDecoration(
-                          labelText: 'Bitiş Tarihi',
-                          prefixIcon: Icon(Icons.event),
-                        ),
+                        controller: _weightCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration:
+                            const InputDecoration(labelText: 'Kilo (kg)'),
                       ),
                     ),
                   ],
@@ -1171,447 +1468,472 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: _travelLoading ? null : _generateTravelPackingList,
-                    icon: const Icon(Icons.luggage),
+                    onPressed: _loading
+                        ? null
+                        : _getInstantOutfitForSelectedLocation,
+                    icon: const Icon(Icons.checkroom),
                     label: Text(
-                      _travelLoading
-                          ? 'Valiz Listesi Hazırlanıyor...'
-                          : 'Seyahat Valizi ve Kombin Listesi Oluştur',
+                      _loading ? 'Hazırlanıyor...' : 'Kombin Önerisi Al',
                     ),
                   ),
                 ),
               ],
             ),
           ),
-        ),
-        if (_travelResult != null) ...[
-          const SizedBox(height: 16),
-          Card(
-            color: const Color(0xFF1E293B),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '📍 ${_travelResult!['hedef_sehir']} (${_travelResult!['gun_sayisi']} Günlük Valiz Önerisi)',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: kMatteWhite,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _travelResult!['valiz_onerisi'].toString(),
-                    style: const TextStyle(height: 1.45),
-                  ),
-                  const SizedBox(height: 14),
-                  const Divider(),
-                  ...forecasts.map((d) {
-                    final day = Map<String, dynamic>.from(d as Map);
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('${day['tarih']} • ${day['hava_durumu_durumu']}'),
-                      trailing: Text(
-                        '${day['min_sicaklik']}°C / ${day['max_sicaklik']}°C  (${day['ruzgar_hizi']} km/s)',
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    );
-                  }),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildRoutinesAndOutfitTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 1. FİZİKSEL PROFİL & KOMBİN ÖNERİSİ (ANA EKRAN İLK KART)
-          Card(
-            color: const Color(0xFF0F172A),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '👕 Fiziksel Profil & Kombin Önerisi',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: kMatteWhite),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Varsayılan konumunuz Profilim ekranından otomatik gelir; dilerseniz aşağıdan tek seferlik başka bir konum seçip anlık öneri alabilirsiniz.',
-                    style: TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 14),
-                  GlobalLocationAutocomplete(
-                    routineService: widget.routineService,
-                    initialLocation: _homeLocation,
-                    labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
-                    onLocationSelected: (loc) => setState(() => _homeLocation = loc),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _heightCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Boy (cm)'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _weightCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Kilo (kg)'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _loading ? null : _getInstantOutfitForSelectedLocation,
-                      icon: const Icon(Icons.checkroom),
-                      label: Text(_loading ? 'Hazırlanıyor...' : 'Kombin Önerisi Al'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
           if (_morningBriefResult != null) ...[
             const SizedBox(height: 16),
-            Card(
-              color: const Color(0xFF1E293B),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']} (${_morningBriefResult!['hissedilen_sicaklik']}°C)',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: kMatteWhite,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF38BDF8).withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '🧠 ${_morningBriefResult!['kullanilan_senaryo_sayisi'] ?? _scenarios.length} senaryo kullanıldı',
-                            style: const TextStyle(fontSize: 11, color: Color(0xFF38BDF8)),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(_morningBriefResult!['oneri'].toString()),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-
-          // 2. TERMAL HAFIZA (AI ÖĞRENME GEÇMİŞİ - GET/POST/DELETE /scenarios)
-          Card(
-            color: const Color(0xFF0F172A),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
+            MarbleCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Expanded(
-                        child: Text(
-                          '🧠 Termal Hafıza (AI Öğrenme Geçmişi)',
-                          style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold, color: kMatteWhite),
+                      Expanded(
+                        child: Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 6,
+                          children: [
+                            Text(
+                              '${_morningBriefResult!['sehir']} • ${_morningBriefResult!['hava_durumu_durumu']}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: ow.textPrimary,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: ow
+                                    .temperatureColor(feelsLikeVal)
+                                    .withOpacity(0.16),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: ow
+                                      .temperatureColor(feelsLikeVal)
+                                      .withOpacity(0.45),
+                                ),
+                              ),
+                              child: Text(
+                                '${_morningBriefResult!['hissedilen_sicaklik']}°C',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12.5,
+                                  color: ow.temperatureColor(feelsLikeVal),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: Colors.white10,
-                          borderRadius: BorderRadius.circular(10),
+                          color: ow.effectiveAccent.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          '${_scenarios.length} kayıt',
-                          style: const TextStyle(fontSize: 11.5, color: Colors.white70),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Geçmişte hangi sıcaklıkta ne giyip terlediğinizi veya üşüdüğünüzü ekleyin; önerileriniz bu deneyimlere göre kişiselleştirilsin.',
-                    style: TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _scenarioInputCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Deneyiminizi Yazın',
-                            hintText: 'Örn: 10 derecede yürürken kalın montla terledim',
-                            prefixIcon: Icon(Icons.psychology_outlined),
+                          '🧠 ${_morningBriefResult!['kullanilan_senaryo_sayisi'] ?? _scenarios.length} senaryo kullanıldı',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: ow.effectiveAccent,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      FilledButton(
-                        onPressed: _scenarioLoading
-                            ? null
-                            : () => _addScenarioText(_scenarioInputCtrl.text),
-                        child: const Text('Ekle'),
                       ),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: _quickScenarioChips
-                        .map(
-                          (sample) => ActionChip(
-                            label: Text('+ $sample', style: const TextStyle(fontSize: 11.5)),
-                            onPressed: _scenarioLoading ? null : () => _addScenarioText(sample),
-                          ),
-                        )
-                        .toList(),
+                  Text(
+                    _morningBriefResult!['oneri'].toString(),
+                    style: TextStyle(color: ow.textPrimary, height: 1.45),
                   ),
-                  if (_scenarios.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Divider(),
-                    ..._scenarios.map((sc) {
-                      final scId = sc['id'] as int;
-                      final scText = (sc['scenario_text'] ?? '').toString();
-                      return ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.memory, color: Color(0xFF38BDF8), size: 19),
-                        title: Text(
-                          scText,
-                          style: const TextStyle(fontSize: 13, color: kMatteWhite),
-                        ),
-                        trailing: IconButton(
-                          tooltip: 'Senaryoyu Sil',
-                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                          onPressed: () => _removeScenarioItem(scId),
-                        ),
-                      );
-                    }),
-                  ],
                 ],
               ),
+            ),
+          ],
+          const SizedBox(height: 16),
+
+          // 2. TERMAL HAFIZA (AI ÖĞRENME GEÇMİŞİ - GET/POST/DELETE /scenarios & SENARYO LİSTESİ SAYFASI)
+          MarbleCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '🧠 Termal Hafıza (AI Öğrenme Geçmişi)',
+                        style: TextStyle(
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.bold,
+                          color: ow.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: ow.elevatedSurface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: ow.cardBorder),
+                      ),
+                      child: Text(
+                        '${_scenarios.length} kayıt',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: ow.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Geçmişte hangi sıcaklıkta ne giyip terlediğinizi veya üşüdüğünüzü ekleyin; önerileriniz bu deneyimlere göre kişiselleştirilsin.',
+                  style: TextStyle(fontSize: 12, color: ow.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _scenarioInputCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Deneyiminizi Yazın',
+                          hintText:
+                              'Örn: 10 derecede yürürken kalın montla terledim',
+                          prefixIcon: Icon(Icons.psychology_outlined),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      onPressed: _scenarioLoading
+                          ? null
+                          : () => _addScenarioText(_scenarioInputCtrl.text),
+                      child: const Text('Ekle'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: _quickScenarioChips
+                      .map(
+                        (sample) => ActionChip(
+                          label: Text(
+                            '+ $sample',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: ow.textPrimary,
+                            ),
+                          ),
+                          onPressed: _scenarioLoading
+                              ? null
+                              : () => _addScenarioText(sample),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _openScenarioListScreen,
+                    icon: Icon(
+                      Icons.format_list_bulleted_rounded,
+                      size: 19,
+                      color: ow.effectiveAccent,
+                    ),
+                    label: Text(
+                      'Senaryo Listesi (${_scenarios.length})',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: ow.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+                if (previewScenarios.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  const Divider(),
+                  ...previewScenarios.map((sc) {
+                    final scId = sc['id'] as int;
+                    final scText = (sc['scenario_text'] ?? '').toString();
+                    final relTime =
+                        formatRelativeScenarioTime(sc['created_at']);
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      onTap: _openScenarioListScreen,
+                      leading: Icon(
+                        Icons.memory,
+                        color: ow.effectiveAccent,
+                        size: 19,
+                      ),
+                      title: Text(
+                        scText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: ow.textPrimary,
+                        ),
+                      ),
+                      subtitle: relTime.isNotEmpty
+                          ? Text(
+                              relTime,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: ow.textSecondary,
+                              ),
+                            )
+                          : null,
+                      trailing: IconButton(
+                        tooltip: 'Senaryoyu Sil',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          color: ow.danger,
+                          size: 20,
+                        ),
+                        onPressed: () => _removeScenarioItem(scId),
+                      ),
+                    );
+                  }),
+                ],
+              ],
             ),
           ),
           const SizedBox(height: 16),
 
           // 3. TEKİL AKILLI YÖNETİM PANELİ: "RUTİNLERİM"
-          Card(
-            color: const Color(0xFF0F172A),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '⏰ Rutinlerim',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: kMatteWhite),
+          MarbleCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '⏰ Rutinlerim',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: ow.textPrimary,
                   ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Sabah uyanma, işe gidiş veya yürüyüş rutinlerinizi ekleyin. Seçtiğiniz süre kadar önce 3-4 cümlelik kişisel kombin yorumunuz sesli bildirim olarak gelir.',
-                    style: TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: TextField(
-                          controller: _customTitleCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Rutin Adı',
-                            hintText: 'Örn: İşe Gidiş',
-                            prefixIcon: Icon(Icons.event_note),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 2,
-                        child: TextField(
-                          controller: _customTimeCtrl,
-                          readOnly: true,
-                          onTap: _pickCustomRoutineTime,
-                          decoration: const InputDecoration(
-                            labelText: 'Saat',
-                            prefixIcon: Icon(Icons.schedule),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    value: _selectedLeadMinutes,
-                    decoration: const InputDecoration(
-                      labelText: 'Bildirim Ne Kadar Önce Gelsin?',
-                      prefixIcon: Icon(Icons.notifications_active_outlined),
-                    ),
-                    items: _leadMinuteOptions
-                        .map(
-                          (mins) => DropdownMenuItem<int>(
-                            value: mins,
-                            child: Text('Rutinden $mins dakika önce'),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (val) {
-                      if (val != null) setState(() => _selectedLeadMinutes = val);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'Tekrarlanacak Günler',
-                    style: TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 8),
-                  Center(
-                    child: ToggleButtons(
-                      isSelected: _selectedDays,
-                      onPressed: (index) {
-                        setState(() {
-                          _selectedDays[index] = !_selectedDays[index];
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      selectedColor: const Color(0xFF020617),
-                      fillColor: const Color(0xFF38BDF8),
-                      color: kMatteWhite,
-                      constraints: const BoxConstraints(minWidth: 40, minHeight: 38),
-                      children: List.generate(
-                        _dayShortLabels.length,
-                        (idx) => Tooltip(
-                          message: _dayFullCodes[idx],
-                          child: Text(
-                            _dayShortLabels[idx],
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Sabah uyanma, işe gidiş veya yürüyüş rutinlerinizi ekleyin. Seçtiğiniz süre kadar önce 3-4 cümlelik kişisel kombin yorumunuz sesli bildirim olarak gelir.',
+                  style: TextStyle(fontSize: 12, color: ow.textSecondary),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: _customTitleCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Rutin Adı',
+                          hintText: 'Örn: İşe Gidiş',
+                          prefixIcon: Icon(Icons.event_note),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _loading ? null : _addCustomRoutine,
-                      icon: const Icon(Icons.add_alarm),
-                      label: const Text('Rutin Ekle'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _testInstantNotificationSound,
-                      icon: const Icon(Icons.volume_up_outlined, color: Color(0xFF38BDF8)),
-                      label: const Text('Bildirimi Şimdi Test Et (Kişisel Yorum Özeti)'),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        await LocalNotificationService.instance.showWeatherShiftAlert();
-                        if (mounted) {
-                          setState(() => _statusMessage =
-                              '⚡ Ani hava değişimi genel uyarı bildirimi anında gönderildi!');
-                        }
-                      },
-                      icon: const Icon(Icons.thunderstorm_outlined, color: Colors.amberAccent),
-                      label: const Text('Ani Hava Değişimi Uyarısını Şimdi Test Et'),
-                    ),
-                  ),
-                  if (_statusMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Text(
-                        _statusMessage!,
-                        style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 12.5),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: _customTimeCtrl,
+                        readOnly: true,
+                        onTap: _pickCustomRoutineTime,
+                        decoration: const InputDecoration(
+                          labelText: 'Saat',
+                          prefixIcon: Icon(Icons.schedule),
+                        ),
                       ),
                     ),
-                  if (_customRoutines.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    const Divider(),
-                    ..._customRoutines.map((item) {
-                      final isEnabled = (item['is_enabled'] ?? true) == true;
-                      final leadMins = item['lead_minutes'] ?? 15;
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          isEnabled ? Icons.notifications_active : Icons.notifications_off_outlined,
-                          color: isEnabled ? const Color(0xFF38BDF8) : Colors.white38,
-                        ),
-                        title: Text(
-                          '${item['routine_title']} • ${item['routine_time']}',
-                          style: TextStyle(
-                            color: isEnabled ? kMatteWhite : Colors.white54,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${item['days_of_week']}  •  $leadMins dk önce (${item['notify_time']})',
-                          style: const TextStyle(fontSize: 12, color: Colors.white60),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Switch(
-                              value: isEnabled,
-                              onChanged: (val) => _toggleRoutineItem(item, val),
-                            ),
-                            IconButton(
-                              tooltip: 'Rutini Sil',
-                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                              onPressed: () => _removeCustomRoutine(item['id'] as int),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
                   ],
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  value: _selectedLeadMinutes,
+                  decoration: const InputDecoration(
+                    labelText: 'Bildirim Ne Kadar Önce Gelsin?',
+                    prefixIcon: Icon(Icons.notifications_active_outlined),
+                  ),
+                  items: _leadMinuteOptions
+                      .map(
+                        (mins) => DropdownMenuItem<int>(
+                          value: mins,
+                          child: Text('Rutinden $mins dakika önce'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _selectedLeadMinutes = val);
+                    }
+                  },
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Tekrarlanacak Günler',
+                  style: TextStyle(fontSize: 12, color: ow.textSecondary),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: ToggleButtons(
+                    isSelected: _selectedDays,
+                    onPressed: (index) {
+                      setState(() {
+                        _selectedDays[index] = !_selectedDays[index];
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    selectedColor: ow.onEffectiveAccent,
+                    fillColor: ow.effectiveAccent,
+                    color: ow.textPrimary,
+                    borderColor: ow.veinLight,
+                    selectedBorderColor: ow.effectiveAccent,
+                    constraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 38,
+                    ),
+                    children: List.generate(
+                      _dayShortLabels.length,
+                      (idx) => Tooltip(
+                        message: _dayFullCodes[idx],
+                        child: Text(
+                          _dayShortLabels[idx],
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _loading ? null : _addCustomRoutine,
+                    icon: const Icon(Icons.add_alarm),
+                    label: const Text('Rutin Ekle'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _testInstantNotificationSound,
+                    icon: Icon(
+                      Icons.volume_up_outlined,
+                      color: ow.effectiveAccent,
+                    ),
+                    label: const Text(
+                      'Bildirimi Şimdi Test Et (Kişisel Yorum Özeti)',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      await LocalNotificationService.instance
+                          .showWeatherShiftAlert();
+                      if (mounted) {
+                        setState(
+                          () => _statusMessage =
+                              '⚡ Ani hava değişimi genel uyarı bildirimi anında gönderildi!',
+                        );
+                      }
+                    },
+                    icon: Icon(
+                      Icons.thunderstorm_outlined,
+                      color: ow.warning,
+                    ),
+                    label: const Text(
+                      'Ani Hava Değişimi Uyarısını Şimdi Test Et',
+                    ),
+                  ),
+                ),
+                if (_statusMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(
+                      _statusMessage!,
+                      style: TextStyle(
+                        color: ow.effectiveAccent,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                if (_customRoutines.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const Divider(),
+                  ..._customRoutines.map((item) {
+                    final isEnabled = (item['is_enabled'] ?? true) == true;
+                    final leadMins = item['lead_minutes'] ?? 15;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        isEnabled
+                            ? Icons.notifications_active
+                            : Icons.notifications_off_outlined,
+                        color: isEnabled
+                            ? ow.effectiveAccent
+                            : ow.textSecondary,
+                      ),
+                      title: Text(
+                        '${item['routine_title']} • ${item['routine_time']}',
+                        style: TextStyle(
+                          color:
+                              isEnabled ? ow.textPrimary : ow.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '${item['days_of_week']}  •  $leadMins dk önce (${item['notify_time']})',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: ow.textSecondary,
+                        ),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Switch(
+                            value: isEnabled,
+                            onChanged: (val) => _toggleRoutineItem(item, val),
+                          ),
+                          IconButton(
+                            tooltip: 'Rutini Sil',
+                            icon: Icon(
+                              Icons.delete_outline,
+                              color: ow.danger,
+                            ),
+                            onPressed: () =>
+                                _removeCustomRoutine(item['id'] as int),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
                 ],
-              ),
+              ],
             ),
           ),
         ],
@@ -1619,28 +1941,34 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
     );
   }
 
-  Widget _buildRightSideDrawer() {
+  Widget _buildRightSideDrawer(OptiWearTheme ow) {
     final avatarB64 = widget.user['avatar_base64']?.toString();
-    final fullName = (widget.user['full_name'] ?? 'OptiWear Kullanıcısı').toString();
+    final fullName =
+        (widget.user['full_name'] ?? 'OptiWear Kullanıcısı').toString();
     final email = (widget.user['email'] ?? '').toString();
 
     return Drawer(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: ow.elevatedSurface,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E293B),
+                color: ow.cardSurface,
                 border: Border(
-                  bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
+                  bottom: BorderSide(color: ow.cardBorder),
                 ),
               ),
               child: Row(
                 children: [
-                  buildUserAvatarWidget(avatarBase64: avatarB64, radius: 26),
+                  buildUserAvatarWidget(
+                    context: context,
+                    avatarBase64: avatarB64,
+                    radius: 26,
+                  ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -1648,8 +1976,8 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                       children: [
                         Text(
                           fullName,
-                          style: const TextStyle(
-                            color: kMatteWhite,
+                          style: TextStyle(
+                            color: ow.textPrimary,
                             fontWeight: FontWeight.bold,
                             fontSize: 15.5,
                           ),
@@ -1658,7 +1986,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
                         const SizedBox(height: 2),
                         Text(
                           email,
-                          style: const TextStyle(color: Colors.white60, fontSize: 12),
+                          style: TextStyle(
+                            color: ow.textSecondary,
+                            fontSize: 12,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
@@ -1669,19 +2000,82 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
             ),
             const SizedBox(height: 8),
             ListTile(
-              leading: const Icon(Icons.person_outline, color: kMatteWhite),
-              title: const Text('Profilim', style: TextStyle(color: kMatteWhite)),
+              leading: Icon(Icons.person_outline, color: ow.textPrimary),
+              title: Text(
+                'Profilim',
+                style: TextStyle(color: ow.textPrimary),
+              ),
               onTap: _openProfileScreen,
             ),
             ListTile(
-              leading: const Icon(Icons.manage_accounts_outlined, color: kMatteWhite),
-              title: const Text('Hesap Ayarları', style: TextStyle(color: kMatteWhite)),
+              leading: Icon(
+                Icons.manage_accounts_outlined,
+                color: ow.textPrimary,
+              ),
+              title: Text(
+                'Hesap Ayarları',
+                style: TextStyle(color: ow.textPrimary),
+              ),
               onTap: _openAccountSettingsScreen,
             ),
             const Divider(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                'Görünüm & Performans',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: ow.textSecondary,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: SegmentedButton<ThemeMode>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: ThemeMode.system,
+                    label: Text('Sistem', style: TextStyle(fontSize: 11.5)),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.light,
+                    label: Text('Carrara', style: TextStyle(fontSize: 11.5)),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.dark,
+                    label: Text('Oniks', style: TextStyle(fontSize: 11.5)),
+                  ),
+                ],
+                selected: {widget.themeMode},
+                onSelectionChanged: (set) {
+                  if (set.isNotEmpty) {
+                    widget.onThemeModeChanged(set.first);
+                  }
+                },
+              ),
+            ),
+            SwitchListTile(
+              dense: true,
+              title: Text(
+                'Düşük Performans Modu',
+                style: TextStyle(color: ow.textPrimary, fontSize: 13),
+              ),
+              subtitle: Text(
+                'Arka plan parçacık sayısını azaltır',
+                style: TextStyle(color: ow.textSecondary, fontSize: 11.5),
+              ),
+              value: widget.lowPerformanceMode,
+              onChanged: widget.onLowPerformanceChanged,
+            ),
+            const Divider(height: 24),
             ListTile(
-              leading: const Icon(Icons.logout, color: Colors.redAccent),
-              title: const Text('Çıkış Yap', style: TextStyle(color: Colors.redAccent)),
+              leading: Icon(Icons.logout, color: ow.danger),
+              title: Text(
+                'Çıkış Yap',
+                style: TextStyle(color: ow.danger, fontWeight: FontWeight.w600),
+              ),
               onTap: () async {
                 Navigator.of(context).pop();
                 await widget.authService.logout();
@@ -1696,16 +2090,17 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ow = OptiWearTheme.of(context);
     final pages = [
-      _buildRoutinesAndOutfitTab(),
-      _buildTravelPackingTab(),
-      _buildQuickWeatherTab(),
+      _buildRoutinesAndOutfitTab(ow),
+      _buildTravelPackingTab(ow),
+      _buildQuickWeatherTab(ow),
     ];
     final avatarB64 = widget.user['avatar_base64']?.toString();
 
     return Scaffold(
       key: _scaffoldKey,
-      endDrawer: _buildRightSideDrawer(),
+      endDrawer: _buildRightSideDrawer(ow),
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: Row(
@@ -1713,8 +2108,9 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
             Container(
               padding: const EdgeInsets.all(3.5),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: ow.cardSurface,
                 borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: ow.cardBorder),
               ),
               child: Image.asset(
                 'assets/images/logo.png',
@@ -1724,10 +2120,10 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
               ),
             ),
             const SizedBox(width: 10),
-            const Text(
+            Text(
               'OptiWear',
               style: TextStyle(
-                color: kMatteWhite,
+                color: ow.textPrimary,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 0.3,
               ),
@@ -1740,15 +2136,30 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
             child: InkWell(
               customBorder: const CircleBorder(),
               onTap: () => _scaffoldKey.currentState?.openEndDrawer(),
-              child: buildUserAvatarWidget(avatarBase64: avatarB64, radius: 18),
+              child: buildUserAvatarWidget(
+                context: context,
+                avatarBase64: avatarB64,
+                radius: 18,
+              ),
             ),
           ),
         ],
       ),
-      body: pages[_selectedTabIndex],
+      body: WeatherAnimatedBackground(
+        lockedWeatherStatus: _lockedWeatherStatus,
+        isNight: ow.isNight,
+        lowPerformanceMode: widget.lowPerformanceMode,
+        onActiveCategoryChanged: (cat) {
+          if (_lockedWeatherStatus == null) {
+            widget.onWeatherStatusChanged(cat.label);
+          }
+        },
+        child: pages[_selectedTabIndex],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedTabIndex,
-        onDestinationSelected: (idx) => setState(() => _selectedTabIndex = idx),
+        onDestinationSelected: (idx) =>
+            setState(() => _selectedTabIndex = idx),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.checkroom),
@@ -1796,16 +2207,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _nameCtrl = TextEditingController(text: (widget.user['full_name'] ?? '').toString());
-    _emailCtrl = TextEditingController(text: (widget.user['email'] ?? '').toString());
+    _nameCtrl = TextEditingController(
+      text: (widget.user['full_name'] ?? '').toString(),
+    );
+    _emailCtrl = TextEditingController(
+      text: (widget.user['email'] ?? '').toString(),
+    );
     _avatarBase64 = widget.user['avatar_base64']?.toString();
 
-    final name = (widget.user['default_location_name'] ?? 'İstanbul').toString();
+    final name =
+        (widget.user['default_location_name'] ?? 'İstanbul').toString();
     final admin1 = (widget.user['default_admin1'] ?? '').toString();
     final country = (widget.user['default_country'] ?? 'Türkiye').toString();
     final lat = (widget.user['default_lat'] as num?)?.toDouble() ?? 41.0082;
     final lon = (widget.user['default_lon'] as num?)?.toDouble() ?? 28.9784;
-    final parts = [name, if (admin1.isNotEmpty && admin1 != name) admin1, if (country.isNotEmpty) country];
+    final parts = [
+      name,
+      if (admin1.isNotEmpty && admin1 != name) admin1,
+      if (country.isNotEmpty) country,
+    ];
 
     _defaultLocation = GlobalLocationSelection(
       name: name,
@@ -1815,6 +2235,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       longitude: lon,
       displayName: parts.join(', '),
     );
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _pickImageFromGallery() async {
@@ -1865,81 +2292,98 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ow = OptiWearTheme.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Profilim', style: TextStyle(color: kMatteWhite)),
+        title: const Text('Profilim'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Card(
-          color: const Color(0xFF0F172A),
-          child: Padding(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(child: MarbleSurfaceBackground()),
+          SingleChildScrollView(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Stack(
-                    alignment: Alignment.bottomRight,
-                    children: [
-                      buildUserAvatarWidget(avatarBase64: _avatarBase64, radius: 44),
-                      IconButton.filled(
-                        tooltip: 'Galeriden Fotoğraf Seç',
-                        onPressed: _pickImageFromGallery,
-                        icon: const Icon(Icons.photo_camera, size: 18),
+            child: MarbleCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Stack(
+                      alignment: Alignment.bottomRight,
+                      children: [
+                        buildUserAvatarWidget(
+                          context: context,
+                          avatarBase64: _avatarBase64,
+                          radius: 44,
+                        ),
+                        IconButton.filled(
+                          tooltip: 'Galeriden Fotoğraf Seç',
+                          onPressed: _pickImageFromGallery,
+                          icon: const Icon(Icons.photo_camera, size: 18),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_avatarBase64 != null && _avatarBase64!.isNotEmpty)
+                    TextButton(
+                      onPressed: () => setState(() => _avatarBase64 = ''),
+                      child: const Text('Fotoğrafı Kaldır'),
+                    ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Ad Soyad',
+                      prefixIcon: Icon(Icons.person_outline),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'E-posta Adresi',
+                      prefixIcon: Icon(Icons.email_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  GlobalLocationAutocomplete(
+                    routineService: widget.routineService,
+                    initialLocation: _defaultLocation,
+                    labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
+                    onLocationSelected: (loc) =>
+                        setState(() => _defaultLocation = loc),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Burada kaydettiğiniz varsayılan konum, ana ekrandaki Kombin Önerisi konum alanına otomatik olarak yansır.',
+                    style: TextStyle(fontSize: 11.5, color: ow.textSecondary),
+                  ),
+                  if (_feedback != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        _feedback!,
+                        style: TextStyle(color: ow.danger),
                       ),
-                    ],
+                    ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _saveProfile,
+                    icon: const Icon(Icons.save_outlined),
+                    label: Text(
+                      _saving
+                          ? 'Kaydediliyor...'
+                          : 'Profili ve Varsayılan Konumu Kaydet',
+                    ),
                   ),
-                ),
-                if (_avatarBase64 != null && _avatarBase64!.isNotEmpty)
-                  TextButton(
-                    onPressed: () => setState(() => _avatarBase64 = ''),
-                    child: const Text('Fotoğrafı Kaldır'),
-                  ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Ad Soyad',
-                    prefixIcon: Icon(Icons.person_outline),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'E-posta Adresi',
-                    prefixIcon: Icon(Icons.email_outlined),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                GlobalLocationAutocomplete(
-                  routineService: widget.routineService,
-                  initialLocation: _defaultLocation,
-                  labelText: 'İlçe veya Şehir Ara (Örn: Tekkeköy, Samsun)',
-                  onLocationSelected: (loc) => setState(() => _defaultLocation = loc),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Burada kaydettiğiniz varsayılan konum, ana ekrandaki Kombin Önerisi konum alanına otomatik olarak yansır.',
-                  style: TextStyle(fontSize: 11.5, color: Colors.white60),
-                ),
-                if (_feedback != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(_feedback!, style: const TextStyle(color: Colors.redAccent)),
-                  ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _saveProfile,
-                  icon: const Icon(Icons.save_outlined),
-                  label: Text(_saving ? 'Kaydediliyor...' : 'Profili ve Varsayılan Konumu Kaydet'),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1963,10 +2407,14 @@ class AccountSettingsScreen extends StatefulWidget {
 class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   Future<void> _confirmAction({required bool permanentDelete}) async {
     final passCtrl = TextEditingController();
+    final ow = OptiWearTheme.of(context);
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(permanentDelete ? 'Hesabı Kalıcı Sil (KVKK)' : 'Hesabı Dondur'),
+        title: Text(
+          permanentDelete ? 'Hesabı Kalıcı Sil (KVKK)' : 'Hesabı Dondur',
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1990,7 +2438,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: permanentDelete ? Colors.red : Colors.orange,
+              backgroundColor: permanentDelete ? ow.danger : ow.warning,
+              foregroundColor: const Color(0xFFFAFAF8),
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(permanentDelete ? 'Kalıcı Olarak Sil' : 'Dondur'),
@@ -2010,54 +2459,69 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Şifre doğrulanamadı veya işlem başarısız.')),
+            const SnackBar(
+              content: Text('Şifre doğrulanamadı veya işlem başarısız.'),
+            ),
           );
         }
       }
     }
+    passCtrl.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final ow = OptiWearTheme.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Hesap Ayarları', style: TextStyle(color: kMatteWhite)),
+        title: const Text('Hesap Ayarları'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Card(
-          color: const Color(0xFF0F172A),
-          child: Padding(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(child: MarbleSurfaceBackground()),
+          Padding(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'Hesap Güvenliği ve Veri Yönetimi',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kMatteWhite),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Hesabınızı geçici olarak dondurabilir veya KVKK kapsamında tüm verilerinizle birlikte kalıcı olarak silebilirsiniz.',
-                  style: TextStyle(fontSize: 12.5, color: Colors.white70),
-                ),
-                const SizedBox(height: 20),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.pause_circle_outline, color: Colors.orangeAccent),
-                  label: const Text('Hesabı Dondur (Geçici Pasife Al)'),
-                  onPressed: () => _confirmAction(permanentDelete: false),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
-                  label: const Text('Hesabı Kalıcı Sil (KVKK)'),
-                  onPressed: () => _confirmAction(permanentDelete: true),
-                ),
-              ],
+            child: MarbleCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Hesap Güvenliği ve Veri Yönetimi',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: ow.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Hesabınızı geçici olarak dondurabilir veya KVKK kapsamında tüm verilerinizle birlikte kalıcı olarak silebilirsiniz.',
+                    style: TextStyle(fontSize: 12.5, color: ow.textSecondary),
+                  ),
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    icon: Icon(
+                      Icons.pause_circle_outline,
+                      color: ow.warning,
+                    ),
+                    label: const Text('Hesabı Dondur (Geçici Pasife Al)'),
+                    onPressed: () => _confirmAction(permanentDelete: false),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    icon: Icon(Icons.delete_forever, color: ow.danger),
+                    label: const Text('Hesabı Kalıcı Sil (KVKK)'),
+                    onPressed: () => _confirmAction(permanentDelete: true),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

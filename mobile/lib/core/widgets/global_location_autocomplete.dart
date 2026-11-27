@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../features/routine/routine_service.dart';
+import '../theme/optiwear_theme.dart';
 
 class GlobalLocationSelection {
   final String name;
@@ -177,37 +178,46 @@ class _GlobalLocationAutocompleteState extends State<GlobalLocationAutocomplete>
           ),
         ),
         if (_results.isNotEmpty)
-          Container(
-            margin: const EdgeInsets.only(top: 4),
-            constraints: const BoxConstraints(maxHeight: 220),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E293B),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: _results.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (ctx, idx) {
-                final item = _results[idx];
-                return ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.place_outlined, color: Color(0xFF38BDF8), size: 20),
-                  title: Text(
-                    item.displayName,
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500),
-                  ),
-                  subtitle: Text(
-                    item.ilce.isNotEmpty
-                        ? 'İlçe: ${item.ilce} • İl/Bölge: ${item.sehir}'
-                        : 'Şehir/Bölge: ${item.sehir}',
-                    style: const TextStyle(fontSize: 11, color: Colors.white54),
-                  ),
-                  onTap: () => _selectItem(item),
-                );
-              },
-            ),
+          Builder(
+            builder: (context) {
+              final ow = OptiWearTheme.of(context);
+              return Container(
+                margin: const EdgeInsets.only(top: 4),
+                constraints: const BoxConstraints(maxHeight: 220),
+                decoration: BoxDecoration(
+                  color: ow.cardSurface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: ow.cardBorder),
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _results.length,
+                  separatorBuilder: (_, __) => Divider(height: 1, color: ow.veinLight),
+                  itemBuilder: (ctx, idx) {
+                    final item = _results[idx];
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(Icons.place_outlined, color: ow.effectiveAccent, size: 20),
+                      title: Text(
+                        item.displayName,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w500,
+                          color: ow.textPrimary,
+                        ),
+                      ),
+                      subtitle: Text(
+                        item.ilce.isNotEmpty
+                            ? 'İlçe: ${item.ilce} • İl/Bölge: ${item.sehir}'
+                            : 'Şehir/Bölge: ${item.sehir}',
+                        style: TextStyle(fontSize: 11, color: ow.textSecondary),
+                      ),
+                      onTap: () => _selectItem(item),
+                    );
+                  },
+                ),
+              );
+            },
           ),
       ],
     );
