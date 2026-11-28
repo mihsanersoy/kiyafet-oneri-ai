@@ -7,32 +7,24 @@ class ApiClient {
   final SecureStorageService storage;
   late final Dio dio;
 
-  /// Android Emülatör için 10.0.2.2:8001 (ana bilgisayarın localhost'u),
-  /// diğer platformlar için 127.0.0.1:8001
+  /// Canlı Kurumsal Bulut Sunucusu (Render HTTPS):
+  /// APK'yı indiren tüm cihazlar ve emülatörler doğrudan 7/24 çalışan canlı sunucuya bağlanır.
+  static const String kProductionBaseUrl = 'https://kiyafet-oneri-ai.onrender.com';
+
   static String get defaultBaseUrl {
     const envUrl = String.fromEnvironment('OPTIWEAR_API_URL', defaultValue: '');
     if (envUrl.isNotEmpty) return envUrl;
-    try {
-      if (Platform.isAndroid) {
-        return 'http://10.0.2.2:8001';
-      }
-    } catch (_) {}
-    return 'http://127.0.0.1:8001';
+    return kProductionBaseUrl;
   }
 
-  void updateBaseUrl(String newUrl) {
-    final cleaned = newUrl.trim();
-    if (cleaned.isNotEmpty) {
-      dio.options.baseUrl = cleaned;
-    }
-  }
-
+  /// Render Free Tier uykudan uyanma (cold start ~25-40 sn) durumuna karşı
+  /// connectTimeout ve receiveTimeout süreleri kurumsal toleransla ayarlandı.
   ApiClient({required this.storage, String? baseUrl}) {
     dio = Dio(
       BaseOptions(
         baseUrl: baseUrl ?? defaultBaseUrl,
-        connectTimeout: const Duration(seconds: 12),
-        receiveTimeout: const Duration(seconds: 25),
+        connectTimeout: const Duration(seconds: 45),
+        receiveTimeout: const Duration(seconds: 45),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
