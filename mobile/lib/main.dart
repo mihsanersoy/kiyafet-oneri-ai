@@ -11,6 +11,7 @@ import 'core/theme/optiwear_theme.dart';
 import 'core/widgets/global_location_autocomplete.dart';
 import 'core/widgets/weather_animated_background.dart';
 import 'features/auth/auth_service.dart';
+import 'features/onboarding/onboarding_screen.dart';
 import 'features/routine/routine_service.dart';
 import 'features/scenario/scenario_list_screen.dart';
 
@@ -34,6 +35,7 @@ class _OptiWearAppState extends State<OptiWearApp> {
 
   Map<String, dynamic>? _currentUser;
   bool _checkingSession = true;
+  bool _showOnboarding = false;
 
   // Sistem temasını takip eder (Carrara Açık / Oniks Koyu), ayrıca çekmeceden değiştirilebilir
   ThemeMode _themeMode = ThemeMode.system;
@@ -63,14 +65,46 @@ class _OptiWearAppState extends State<OptiWearApp> {
     return hour < 6 || hour >= 19;
   }
 
+  String _userOnboardingIdentifier(Map<String, dynamic> user) {
+    final id = (user['id'] ?? '').toString().trim();
+    if (id.isNotEmpty) return id;
+    return (user['email'] ?? 'default').toString().trim();
+  }
+
+  Future<void> _applyAuthenticatedUser(Map<String, dynamic> user) async {
+    final uidKey = _userOnboardingIdentifier(user);
+    final completed = await _storage.hasCompletedOnboarding(uidKey);
+    if (mounted) {
+      setState(() {
+        _currentUser = user;
+        _showOnboarding = !completed;
+      });
+    }
+  }
+
+  Future<void> _completeOnboardingForCurrentUser() async {
+    final user = _currentUser;
+    if (user != null) {
+      await _storage.setOnboardingCompleted(
+        _userOnboardingIdentifier(user),
+        completed: true,
+      );
+    }
+    if (mounted) {
+      setState(() => _showOnboarding = false);
+    }
+  }
+
   Future<void> _restoreSession() async {
     try {
+      final savedUrl = await _storage.getCustomApiBaseUrl();
+      if (savedUrl != null && savedUrl.isNotEmpty) {
+        _apiClient.updateBaseUrl(savedUrl);
+      }
       final token = await _storage.getAccessToken();
       if (token != null && token.isNotEmpty) {
         final profile = await _authService.getMyProfile();
-        if (mounted) {
-          setState(() => _currentUser = profile);
-        }
+        await _applyAuthenticatedUser(profile);
       }
     } catch (_) {
       await _storage.clearSession();
@@ -122,24 +156,31 @@ class _OptiWearAppState extends State<OptiWearApp> {
           : _currentUser == null
               ? AuthScreen(
                   authService: _authService,
-                  onAuthenticated: (user) =>
-                      setState(() => _currentUser = user),
+                  onAuthenticated: (user) => _applyAuthenticatedUser(user),
                 )
-              : RoutineDashboardScreen(
-                  user: _currentUser!,
-                  authService: _authService,
-                  routineService: _routineService,
-                  themeMode: _themeMode,
-                  lowPerformanceMode: _lowPerformanceMode,
-                  onThemeModeChanged: (mode) =>
-                      setState(() => _themeMode = mode),
-                  onLowPerformanceChanged: (val) =>
-                      setState(() => _lowPerformanceMode = val),
-                  onWeatherStatusChanged: _handleWeatherStatusChanged,
-                  onUserUpdated: (updated) =>
-                      setState(() => _currentUser = updated),
-                  onLogout: () => setState(() => _currentUser = null),
-                ),
+              : _showOnboarding
+                  ? OnboardingScreen(
+                      onFinished: _completeOnboardingForCurrentUser,
+                    )
+                  : RoutineDashboardScreen(
+                      user: _currentUser!,
+                      authService: _authService,
+                      routineService: _routineService,
+                      storage: _storage,
+                      themeMode: _themeMode,
+                      lowPerformanceMode: _lowPerformanceMode,
+                      onThemeModeChanged: (mode) =>
+                          setState(() => _themeMode = mode),
+                      onLowPerformanceChanged: (val) =>
+                          setState(() => _lowPerformanceMode = val),
+                      onWeatherStatusChanged: _handleWeatherStatusChanged,
+                      onUserUpdated: (updated) =>
+                          setState(() => _currentUser = updated),
+                      onLogout: () => setState(() {
+                        _currentUser = null;
+                        _showOnboarding = false;
+                      }),
+                    ),
     );
   }
 }
@@ -641,6 +682,7 @@ class RoutineDashboardScreen extends StatefulWidget {
   final Map<String, dynamic> user;
   final AuthService authService;
   final RoutineService routineService;
+  final SecureStorageService storage;
   final ThemeMode themeMode;
   final bool lowPerformanceMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
@@ -654,6 +696,7 @@ class RoutineDashboardScreen extends StatefulWidget {
     required this.user,
     required this.authService,
     required this.routineService,
+    required this.storage,
     required this.themeMode,
     required this.lowPerformanceMode,
     required this.onThemeModeChanged,
@@ -1164,6 +1207,7 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
           user: widget.user,
           authService: widget.authService,
           routineService: widget.routineService,
+          storage: widget.storage,
         ),
       ),
     );
@@ -2185,17 +2229,19 @@ class _RoutineDashboardScreenState extends State<RoutineDashboardScreen> {
   }
 }
 
-/// 1. YAN MENÜ EKRANI: PROFİLİM (Fotoğraf Seçimi, Ad Soyad, E-posta, Varsayılan Uluslararası Konum)
+/// 1. YAN MENÜ EKRANI: PROFİLİM (Fotoğraf Seçimi, Ad Soyad, E-posta, Varsayılan Uluslararası Konum, Eğitimi Tekrar Göster)
 class ProfileScreen extends StatefulWidget {
   final Map<String, dynamic> user;
   final AuthService authService;
   final RoutineService routineService;
+  final SecureStorageService storage;
 
   const ProfileScreen({
     super.key,
     required this.user,
     required this.authService,
     required this.routineService,
+    required this.storage,
   });
 
   @override
@@ -2209,6 +2255,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late GlobalLocationSelection _defaultLocation;
   bool _saving = false;
   String? _feedback;
+
+  String get _userIdentifier {
+    final id = (widget.user['id'] ?? '').toString().trim();
+    if (id.isNotEmpty) return id;
+    return (widget.user['email'] ?? 'default').toString().trim();
+  }
+
+  Future<void> _reopenOnboarding() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => OnboardingScreen(
+          onFinished: () async {
+            await widget.storage.setOnboardingCompleted(
+              _userIdentifier,
+              completed: true,
+            );
+            if (ctx.mounted) {
+              Navigator.of(ctx).pop();
+            }
+          },
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -2383,6 +2453,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _saving
                           ? 'Kaydediliyor...'
                           : 'Profili ve Varsayılan Konumu Kaydet',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  Semantics(
+                    button: true,
+                    label: 'Uygulama tanıtım eğitimini tekrar göster',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.menu_book_rounded,
+                        color: ow.effectiveAccent,
+                      ),
+                      title: Text(
+                        'Eğitimi Tekrar Göster',
+                        style: TextStyle(
+                          color: ow.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'Uygulama bölümlerinin nasıl çalıştığını anlatan tanıtım kartlarını yeniden açar.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: ow.textSecondary,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right_rounded,
+                        color: ow.textSecondary,
+                      ),
+                      onTap: _reopenOnboarding,
                     ),
                   ),
                 ],

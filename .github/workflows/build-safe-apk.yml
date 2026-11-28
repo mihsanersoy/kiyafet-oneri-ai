@@ -69,8 +69,24 @@ jobs:
             done
           fi
 
-          # flutter_local_notifications için Core Library Desugaring ve SDK 34 yapılandırması
-          cat << 'EOF' > android/app/build.gradle
+          # Sabit (Deterministik) İmza Anahtarı (Keystore):
+          # Her GitHub Actions derlemesinde aynı sertifika üretildiği için eski uygulamayı silmeden
+          # doğrudan üzerine "Güncelle" olarak kurulabilir (ve sıfırdan da kurulabilir).
+          rm -f ~/.android/optiwear_release.keystore
+          mkdir -p ~/.android
+          keytool -genkeypair -v \
+            -keystore ~/.android/optiwear_release.keystore \
+            -alias optiwear_key \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -startdate "2026/01/01 00:00:00" \
+            -storepass optiwear2026 \
+            -keypass optiwear2026 \
+            -dname "CN=OptiWear, OU=Mobile, O=OptiWear, L=Istanbul, ST=Istanbul, C=TR"
+
+          # flutter_local_notifications için Core Library Desugaring, Sabit İmza ve Otomatik Artan versionCode
+          cat << EOF > android/app/build.gradle
           plugins {
               id "com.android.application"
               id "kotlin-android"
@@ -92,18 +108,27 @@ jobs:
                   jvmTarget = "1.8"
               }
 
+              signingConfigs {
+                  optiwearFixed {
+                      storeFile file("\${System.properties['user.home']}/.android/optiwear_release.keystore")
+                      storePassword "optiwear2026"
+                      keyAlias "optiwear_key"
+                      keyPassword "optiwear2026"
+                  }
+              }
+
               defaultConfig {
                   applicationId = "app.optiwear.optiwear_mobile"
                   minSdk = 21
                   targetSdk = 34
-                  versionCode = 5
-                  versionName = "1.2.2"
+                  versionCode = ${{ github.run_number }}
+                  versionName = "1.5.${{ github.run_number }}"
                   multiDexEnabled true
               }
 
               buildTypes {
                   release {
-                      signingConfig = signingConfigs.debug
+                      signingConfig = signingConfigs.optiwearFixed
                       minifyEnabled false
                       shrinkResources false
                   }

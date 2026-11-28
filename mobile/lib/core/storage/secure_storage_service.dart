@@ -8,6 +8,8 @@ class SecureStorageService {
   static const _keyRefreshToken = 'optiwear_refresh_token';
   static const _keyUserEmail = 'optiwear_user_email';
   static const _keyUserFullName = 'optiwear_user_full_name';
+  static const _keyOnboardingPrefix = 'optiwear_onboarding_completed_';
+  static const _keyCustomApiBaseUrl = 'optiwear_custom_api_base_url';
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
     aOptions: AndroidOptions(
@@ -45,5 +47,45 @@ class SecureStorageService {
     await _storage.delete(key: _keyRefreshToken);
     await _storage.delete(key: _keyUserEmail);
     await _storage.delete(key: _keyUserFullName);
+  }
+
+  String _normalizeUserKey(String userIdentifier) {
+    final cleaned = userIdentifier.trim().toLowerCase().replaceAll(
+          RegExp(r'[^a-z0-9_@.-]'),
+          '_',
+        );
+    return '$_keyOnboardingPrefix${cleaned.isEmpty ? "default" : cleaned}';
+  }
+
+  /// Kullanıcı bazlı tanıtım eğitimi (onboarding) tamamlandı/atlandı kontrolü
+  Future<bool> hasCompletedOnboarding(String userIdentifier) async {
+    final val = await _storage.read(key: _normalizeUserKey(userIdentifier));
+    return val == 'true';
+  }
+
+  /// Kullanıcı bazlı tanıtım eğitimi (onboarding) durumunu kalıcı olarak günceller
+  Future<void> setOnboardingCompleted(
+    String userIdentifier, {
+    bool completed = true,
+  }) async {
+    final key = _normalizeUserKey(userIdentifier);
+    if (completed) {
+      await _storage.write(key: key, value: 'true');
+    } else {
+      await _storage.delete(key: key);
+    }
+  }
+
+  /// İsteğe bağlı özel/bulut sunucu adresi saklama
+  Future<String?> getCustomApiBaseUrl() =>
+      _storage.read(key: _keyCustomApiBaseUrl);
+
+  Future<void> setCustomApiBaseUrl(String? url) async {
+    final cleaned = (url ?? '').trim();
+    if (cleaned.isEmpty) {
+      await _storage.delete(key: _keyCustomApiBaseUrl);
+    } else {
+      await _storage.write(key: _keyCustomApiBaseUrl, value: cleaned);
+    }
   }
 }
