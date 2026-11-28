@@ -17,6 +17,13 @@ class ApiClient {
     return kProductionBaseUrl;
   }
 
+  void updateBaseUrl(String newUrl) {
+    final cleaned = newUrl.trim();
+    if (cleaned.isNotEmpty) {
+      dio.options.baseUrl = cleaned;
+    }
+  }
+
   /// Render Free Tier uykudan uyanma (cold start ~25-40 sn) durumuna karşı
   /// connectTimeout ve receiveTimeout süreleri kurumsal toleransla ayarlandı.
   ApiClient({required this.storage, String? baseUrl}) {

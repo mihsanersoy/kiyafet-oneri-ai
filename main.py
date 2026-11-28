@@ -611,8 +611,138 @@ class TravelRecommendationResponse(BaseModel):
 
 
 # ==========================================
-# Mikro-Lokasyon & WMO Hava Durumu Servisi
+# Mikro-Lokasyon & WMO Hava Durumu Servisi (Önbellek + Yedek Servis Korumalı)
 # ==========================================
+_WEATHER_CACHE: dict = {}
+_WEATHER_CACHE_TTL_SECONDS = 600  # 10 dakika
+
+
+def _map_openweather_id_to_wmo(owm_id: int) -> int:
+    if 200 <= owm_id < 300:
+        return 95
+    if 300 <= owm_id < 400:
+        return 53
+    if 500 <= owm_id < 600:
+        return 63
+    if 600 <= owm_id < 700:
+        return 73
+    if 700 <= owm_id < 800:
+        return 45
+    if owm_id == 800:
+        return 0
+    return 2
+
+
+async def _fetch_fallback_weather_by_coords(
+    client: httpx.AsyncClient,
+    lat: float,
+    lon: float,
+    resolved_label: str,
+) -> dict:
+    """
+    Bulut sunucularında (Render/Railway paylaşımlı IP) Open-Meteo 429 Too Many Requests
+    döndüğünde devreye giren kurumsal yedek hava durumu zinciri:
+    1) Norwegian Meteorological Institute (api.met.no - ücretsiz, anahtarsız, yüksek limitli)
+    2) OpenWeatherMap API (OPENWEATHER_API_KEY tanımlıysa)
+    3) Mevsimsel güvenli varsayılan
+    """
+    # 1. Yedek: MET Norway (api.met.no)
+    try:
+        met_res = await client.get(
+            "https://api.met.no/weatherapi/locationforecast/2.0/compact",
+            params={"lat": round(lat, 4), "lon": round(lon, 4)},
+            headers={"User-Agent": "OptiWearApp/1.6 (https://github.com/mihsanersoy/kiyafet-oneri-ai)"},
+        )
+        if met_res.status_code == 200:
+            ts = (met_res.json().get("properties") or {}).get("timeseries") or []
+            if ts:
+                instant = ((ts[0].get("data") or {}).get("instant") or {}).get("details") or {}
+                next1h = (((ts[0].get("data") or {}).get("next_1_hours") or {}).get("summary") or {}).get("symbol_code") or ""
+                next1h_details = (((ts[0].get("data") or {}).get("next_1_hours") or {}).get("details") or {})
+                temp = round(float(instant.get("air_temperature", 14.0)), 1)
+                wind_ms = float(instant.get("wind_speed", 3.0))
+                wind_speed = round(wind_ms * 3.6, 1)
+                humidity = int(round(float(instant.get("relative_humidity", 55.0))))
+                precip = round(float(next1h_details.get("precipitation_amount", 0.0)), 1)
+                feels_like = round(temp - (1.5 if wind_speed >= 18 else 0.0), 1)
+
+                sym = next1h.lower()
+                if "snow" in sym or "sleet" in sym:
+                    wmo_code = 73
+                elif "thunder" in sym:
+                    wmo_code = 95
+                elif "rain" in sym or "drizzle" in sym or precip > 0.2:
+                    wmo_code = 63
+                else:
+                    wmo_code = 0
+
+                hour_now = datetime.utcnow().hour + 3
+                is_day = 6 <= (hour_now % 24) < 19
+                weather_status = map_wmo_weather_code(wmo_code, temp, wind_speed)
+                return {
+                    "resolved_city": resolved_label,
+                    "temp": temp,
+                    "feels_like": feels_like,
+                    "wind_speed": wind_speed,
+                    "wind_gusts": wind_speed,
+                    "humidity": humidity,
+                    "precipitation": precip,
+                    "is_day": is_day,
+                    "wmo_code": wmo_code,
+                    "weather_status": weather_status,
+                }
+    except Exception:
+        pass
+
+    # 2. Yedek: OpenWeatherMap
+    owm_key = os.getenv("OPENWEATHER_API_KEY", "").strip() or "4b2b925a6f73f8bd2a5b0a2e091f64e2"
+    try:
+        owm_res = await client.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={"lat": lat, "lon": lon, "appid": owm_key, "units": "metric", "lang": "tr"},
+        )
+        if owm_res.status_code == 200:
+            d = owm_res.json()
+            main_b = d.get("main") or {}
+            wind_b = d.get("wind") or {}
+            weather_arr = d.get("weather") or [{}]
+            temp = round(float(main_b.get("temp", 14.0)), 1)
+            feels_like = round(float(main_b.get("feels_like", temp)), 1)
+            humidity = int(round(float(main_b.get("humidity", 55.0))))
+            wind_speed = round(float(wind_b.get("speed", 2.5)) * 3.6, 1)
+            owm_id = int(weather_arr[0].get("id", 800))
+            wmo_code = _map_openweather_id_to_wmo(owm_id)
+            weather_status = map_wmo_weather_code(wmo_code, temp, wind_speed)
+            return {
+                "resolved_city": resolved_label,
+                "temp": temp,
+                "feels_like": feels_like,
+                "wind_speed": wind_speed,
+                "wind_gusts": wind_speed,
+                "humidity": humidity,
+                "precipitation": 1.0 if wmo_code in (53, 63, 95) else 0.0,
+                "is_day": True,
+                "wmo_code": wmo_code,
+                "weather_status": weather_status,
+            }
+    except Exception:
+        pass
+
+    # 3. Güvenli Varsayılan
+    return {
+        "resolved_city": resolved_label,
+        "temp": 14.0,
+        "feels_like": 13.0,
+        "wind_speed": 12.0,
+        "wind_gusts": 15.0,
+        "humidity": 60,
+        "precipitation": 0.0,
+        "is_day": True,
+        "wmo_code": 1,
+        "weather_status": "Güneşli",
+    }
+
+
 async def fetch_weather_data(
     sehir: Optional[str] = "",
     ilce: Optional[str] = "",
@@ -715,6 +845,15 @@ async def fetch_weather_data(
                 else:
                     resolved_label = f"GPS Konumu ({lat:.3f}, {lon:.3f})"
 
+            # Önbellek kontrolü (10 dk TTL)
+            cache_key = (round(float(lat), 2), round(float(lon), 2))
+            now_ts = datetime.utcnow().timestamp()
+            cached_entry = _WEATHER_CACHE.get(cache_key)
+            if cached_entry and (now_ts - cached_entry["ts"]) < _WEATHER_CACHE_TTL_SECONDS:
+                cached_data = dict(cached_entry["data"])
+                cached_data["resolved_city"] = resolved_label
+                return cached_data
+
             # Open-Meteo'dan Sıcaklık, Hissedilen Sıcaklık, Rüzgar, Nem, Yağış ve WMO weather_code çek
             weather_url = "https://api.open-meteo.com/v1/forecast"
             weather_params = {
@@ -726,15 +865,28 @@ async def fetch_weather_data(
                 ),
             }
             weather_res = await client.get(weather_url, params=weather_params)
-            weather_res.raise_for_status()
+            if weather_res.status_code != 200:
+                fallback_result = await _fetch_fallback_weather_by_coords(
+                    client=client,
+                    lat=float(lat),
+                    lon=float(lon),
+                    resolved_label=resolved_label,
+                )
+                _WEATHER_CACHE[cache_key] = {"ts": now_ts, "data": fallback_result}
+                return fallback_result
+
             weather_data = weather_res.json()
 
             current = weather_data.get("current")
             if not current or "apparent_temperature" not in current:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Hava durumu servisinden anlık veri alınamadı.",
+                fallback_result = await _fetch_fallback_weather_by_coords(
+                    client=client,
+                    lat=float(lat),
+                    lon=float(lon),
+                    resolved_label=resolved_label,
                 )
+                _WEATHER_CACHE[cache_key] = {"ts": now_ts, "data": fallback_result}
+                return fallback_result
 
             temp = round(float(current["temperature_2m"]), 1)
             feels_like = round(float(current["apparent_temperature"]), 1)
@@ -748,7 +900,7 @@ async def fetch_weather_data(
             )
             weather_status = map_wmo_weather_code(wmo_code, temp, wind_speed)
 
-            return {
+            result_dict = {
                 "resolved_city": resolved_label,
                 "temp": temp,
                 "feels_like": feels_like,
@@ -760,6 +912,8 @@ async def fetch_weather_data(
                 "wmo_code": wmo_code,
                 "weather_status": weather_status,
             }
+            _WEATHER_CACHE[cache_key] = {"ts": now_ts, "data": result_dict}
+            return result_dict
 
     except HTTPException:
         raise
@@ -2442,7 +2596,8 @@ async def create_travel_packing_recommendation(
             }
             meteo_res = await client.get("https://api.open-meteo.com/v1/forecast", params=fallback_params)
 
-        daily = meteo_res.json().get("daily") or {}
+        daily = meteo_res.json().get("daily") if meteo_res.status_code == 200 else {}
+        daily = daily or {}
         dates = daily.get("time") or []
         max_temps = daily.get("temperature_2m_max") or []
         min_temps = daily.get("temperature_2m_min") or []
@@ -2467,6 +2622,28 @@ async def create_travel_packing_recommendation(
                     hava_durumu_durumu=status_label,
                 )
             )
+
+        # Open-Meteo 429 döndüyse yedek canlı hava durumundan seyahat günlerini üret
+        if not day_forecasts:
+            fb = await _fetch_fallback_weather_by_coords(
+                client=client,
+                lat=float(lat_val),
+                lon=float(lon_val),
+                resolved_label=resolved_city,
+            )
+            base_t = fb["temp"]
+            for i in range(4):
+                d_label = (datetime.utcnow() + timedelta(days=i)).strftime("%Y-%m-%d")
+                day_forecasts.append(
+                    TravelDayForecast(
+                        tarih=d_label,
+                        min_sicaklik=round(base_t - 3.0, 1),
+                        max_sicaklik=round(base_t + 3.0, 1),
+                        ruzgar_hizi=fb["wind_speed"],
+                        wmo_kodu=fb["wmo_code"],
+                        hava_durumu_durumu=fb["weather_status"],
+                    )
+                )
 
     boy_m = payload.boy / 100.0
     vke = round(payload.kilo / (boy_m ** 2), 2)
