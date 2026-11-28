@@ -1237,7 +1237,7 @@ def _send_smtp_otp_email_if_configured(recipient_email: str, full_name: str, otp
         return False
 
 
-def _issue_email_otp(db: Session, user: User) -> str:
+def _issue_email_otp(db: Session, user: User) -> tuple[str, bool]:
     """
     6 haneli kriptografik rastgele OTP üretir, email_otps tablosuna (15 dk geçerli)
     kaydeder, SMTP ayarlıysa gerçek mail atar ve terminale yazdırır.
@@ -1267,7 +1267,7 @@ def _issue_email_otp(db: Session, user: User) -> str:
     )
     print(banner, flush=True)
     security_logger.info(f"[OTP] {user.email} için 6 haneli doğrulama kodu üretildi: {otp_code}")
-    return otp_code
+    return otp_code, sent_real_mail
 
 
 # ==========================================
@@ -1305,9 +1305,14 @@ def register_user(
         existing.phone_number = encrypt_pii(payload.phone_number)
         existing.is_active = True
         db.commit()
-        _issue_email_otp(db, existing)
+        otp_code, sent_real_mail = _issue_email_otp(db, existing)
+        msg_text = (
+            "Kayıt bilgileriniz güncellendi. E-postanıza gönderilen 6 haneli OTP kodunu doğrulayın."
+            if sent_real_mail
+            else f"Kayıt bilgileriniz güncellendi. Doğrulama Kodunuz: {otp_code}"
+        )
         return RegisterOTPResponse(
-            mesaj="Kayıt bilgileriniz güncellendi. E-postanıza (terminale) gönderilen 6 haneli OTP kodunu doğrulayın.",
+            mesaj=msg_text,
             email=existing.email,
             verification_required=True,
             expires_in_minutes=15,
@@ -1340,10 +1345,15 @@ def register_user(
     db.commit()
     db.refresh(new_user)
 
-    _issue_email_otp(db, new_user)
+    otp_code, sent_real_mail = _issue_email_otp(db, new_user)
+    msg_text = (
+        "Kayıt başarılı! Lütfen e-postanıza gönderilen 6 haneli OTP kodunu girerek hesabınızı doğrulayın."
+        if sent_real_mail
+        else f"Kayıt başarılı! Doğrulama Kodunuz: {otp_code}"
+    )
 
     return RegisterOTPResponse(
-        mesaj="Kayıt başarılı! Lütfen e-postanıza (terminale) gönderilen 6 haneli OTP kodunu girerek hesabınızı doğrulayın.",
+        mesaj=msg_text,
         email=new_user.email,
         verification_required=True,
         expires_in_minutes=15,
@@ -1445,10 +1455,15 @@ def login_user(
         )
 
     if not user.is_verified:
-        _issue_email_otp(db, user)
+        otp_code, sent_real_mail = _issue_email_otp(db, user)
+        detail_msg = (
+            "E-posta adresiniz henüz doğrulanmamış. Yeni 6 haneli OTP kodunuz e-postanıza gönderildi."
+            if sent_real_mail
+            else f"E-posta adresiniz henüz doğrulanmamış. Yeni Doğrulama Kodunuz: {otp_code}"
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="E-posta adresiniz henüz doğrulanmamış. Yeni 6 haneli OTP kodunuz gönderildi (terminali kontrol edin).",
+            detail=detail_msg,
         )
 
     access_token = create_access_token(user.id, user.token_version)
